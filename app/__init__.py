@@ -1,1 +1,0 @@
-"""IPO aggregation API package."""
