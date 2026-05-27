@@ -98,9 +98,35 @@ class DatabaseService:
                         triggered_by=ipo_data.get("_triggered_by", "system"),
                     )
                 
-                # Update fields
+                # Detect document URL changes — reset processed flag if URL changed
+                doc_url_fields = {
+                    "drhp_url": "drhp_processed",
+                    "rhp_url": "rhp_processed",
+                    "final_prospectus_url": "rhp_processed",  # reuse rhp_processed for FP
+                }
+                for url_field, processed_field in doc_url_fields.items():
+                    new_url = ipo_data.get(url_field)
+                    old_url = getattr(existing, url_field, None)
+                    if new_url and new_url != old_url:
+                        # URL changed — existing text is stale, reset processed flag
+                        setattr(existing, processed_field, 0)
+                        # Delete stale extracted text from ipo_parsed_data
+                        data_type_lookup = {
+                            "drhp_url": "raw_text_drhp",
+                            "rhp_url": "raw_text_rhp",
+                            "final_prospectus_url": "raw_text_final_prospectus",
+                        }
+                        dt = data_type_lookup.get(url_field)
+                        if dt:
+                            session.query(IPOParsedData).filter(
+                                IPOParsedData.ipo_master_id == existing.id,
+                                IPOParsedData.data_type == dt,
+                            ).delete()
+                
+                # Update fields — skip internal-processed flags (managed by URL change detection)
+                processed_fields = {"drhp_processed", "rhp_processed"}
                 for key, value in ipo_data.items():
-                    if key.startswith("_") or key in ("id", "normalized_name", "first_seen"):
+                    if key.startswith("_") or key in ("id", "normalized_name", "first_seen") or key in processed_fields:
                         continue
                     if hasattr(existing, key):
                         setattr(existing, key, value)
@@ -112,10 +138,11 @@ class DatabaseService:
                 return existing, False
             else:
                 # New IPO
+                processed_fields = {"drhp_processed", "rhp_processed"}
                 record = IPOMaster(normalized_name=normalized_name, **{
                     k: v for k, v in ipo_data.items()
                     if k != "normalized_name" and not k.startswith("_")
-                    and hasattr(IPOMaster, k)
+                    and hasattr(IPOMaster, k) and k not in processed_fields
                 })
                 record.first_seen = now
                 record.last_updated = now
