@@ -276,11 +276,12 @@ async def scrape_page(request: Request):
 
 
 @app.post("/dashboard/scrape/run")
-async def scrape_run(request: Request, resolve_docs: bool = Query(False)):
+async def scrape_run(request: Request, resolve_docs: bool = Query(False), year: Optional[int] = Query(None)):
     report = await scraper.run_full_scrape(
         bse_sme=True,
         include_pdf_urls=True,
         resolve_docs=resolve_docs,
+        year=year,
     )
     logs = db.get_recent_logs(limit=20)
     return render("scrape.html", {

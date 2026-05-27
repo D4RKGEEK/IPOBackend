@@ -108,8 +108,9 @@ class ScraperService:
         self,
         bse_sme: bool = True,
         include_pdf_urls: bool = True,
-        resolve_docs: bool = False,  # New: resolve ZIPs and extract text after scrape
+        resolve_docs: bool = False,
         resolve_doc_limit: int = 20,
+        year: Optional[int] = None,
     ) -> dict[str, Any]:
         """
         Scrape all sources, diff against DB, return a report.
@@ -201,11 +202,20 @@ class ScraperService:
 
         deduped = list(merged.values())
         self.logger.info(f"Scraped {len(results)} raw records, deduped to {len(deduped)} unique IPOs")
-
+        
         # Save to database
         for record in deduped:
             try:
                 ipo_data = _record_to_ipo_data(record, ["sebi", "bse", "nse", "bse_sme"])
+                
+                # Year filter: check after converting to ipo_data (reliable dates)
+                if year:
+                    drhp = ipo_data.get("drhp_filed_date", "")
+                    rhp = ipo_data.get("rhp_filed_date", "")
+                    if not ((drhp and str(drhp).startswith(str(year))) or 
+                            (rhp and str(rhp).startswith(str(year)))):
+                        continue
+                
                 _, is_new = self.db.upsert_ipo(ipo_data)
                 if is_new:
                     new_count += 1
@@ -375,6 +385,7 @@ def main():
     parser.add_argument("--no-bse-sme", action="store_true", help="Skip BSE SME scraping")
     parser.add_argument("--resolve-docs", action="store_true", help="Resolve ZIP URLs and extract PDF text after scraping")
     parser.add_argument("--resolve-limit", type=int, default=50, help="Max documents to resolve (default: 50, max: 500)")
+    parser.add_argument("--year", type=int, default=None, help="Only scrape IPOs from a specific year (e.g. 2026)")
     args = parser.parse_args()
 
     service = ScraperService()
@@ -383,6 +394,7 @@ def main():
         include_pdf_urls=not args.no_pdf_urls,
         resolve_docs=args.resolve_docs,
         resolve_doc_limit=args.resolve_limit,
+        year=args.year,
     ))
 
     print(f"\n{'='*50}")

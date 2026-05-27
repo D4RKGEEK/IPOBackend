@@ -510,12 +510,16 @@ async def refresh(
     resolve_limit: int = Query(
         50, ge=1, le=500, description="Max documents to resolve if resolve_docs=true"
     ),
+    year: Optional[int] = Query(
+        None, description="Only scrape IPOs from a specific year (e.g. 2026)"
+    ),
 ):
     report = await scraper_service.run_full_scrape(
         bse_sme=True,
         include_pdf_urls=True,
         resolve_docs=resolve_docs,
         resolve_doc_limit=resolve_limit,
+        year=year,
     )
     return report
 
