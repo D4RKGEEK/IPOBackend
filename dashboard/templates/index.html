@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Overview - IPO Dashboard{% endblock %}
+{% block heading %}Overview{% endblock %}
+{% block content %}
+
+<!-- Stats Cards -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+    <div class="bg-white rounded-lg shadow p-4">
+        <p class="text-sm text-gray-500">Total IPOs</p>
+        <p class="text-3xl font-bold">{{ stats.total_ipos }}</p>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <p class="text-sm text-gray-500">With DRHP</p>
+        <p class="text-3xl font-bold">{{ stats.total_with_drhp }}</p>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <p class="text-sm text-gray-500">With RHP</p>
+        <p class="text-3xl font-bold">{{ stats.total_with_rhp }}</p>
+    </div>
+    <div class="bg-white rounded-lg shadow p-4">
+        <p class="text-sm text-gray-500">Avg Confidence</p>
+        <p class="text-3xl font-bold">{{ "%.0f"|format(stats.avg_confidence * 100) }}%</p>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+    <!-- Status Distribution -->
+    <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="font-semibold mb-3">By Status</h3>
+        <div class="space-y-2">
+            {% set items = stats.ipos_by_status.items()|list %}
+            {% for status, count in items|sort(attribute='1', reverse=True) %}
+            <div class="flex justify-between items-center">
+                <span class="text-sm">
+                    <span class="inline-block w-2 h-2 rounded-full mr-2 
+                        {% if status == 'drhp_filed' %}bg-yellow-400
+                        {% elif status == 'sebi_approved' %}bg-blue-400
+                        {% elif status == 'rhp_filed' %}bg-indigo-400
+                        {% elif status == 'upcoming' %}bg-purple-400
+                        {% elif status == 'open' %}bg-green-400
+                        {% elif status == 'closed' %}bg-orange-400
+                        {% elif status == 'listed' %}bg-teal-400
+                        {% else %}bg-gray-400{% endif %}">
+                    </span>
+                    {{ status }}
+                </span>
+                <span class="text-sm font-semibold">{{ count }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Platform Distribution -->
+    <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="font-semibold mb-3">By Platform</h3>
+        <div class="space-y-2">
+            {% for platform, count in (stats.ipos_by_platform.items()|list)|sort(attribute='1', reverse=True) %}
+            <div class="flex justify-between items-center">
+                <span class="text-sm">{{ platform or 'Unknown' }}</span>
+                <span class="text-sm font-semibold">{{ count }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Last Scrape -->
+    <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="font-semibold mb-3">Last Scrape</h3>
+        {% if stats.latest_scrape %}
+        <div class="space-y-2 text-sm">
+            <div class="flex justify-between">
+                <span class="text-gray-500">Status</span>
+                <span class="font-semibold {% if stats.latest_scrape.status == 'success' %}text-green-600{% else %}text-red-600{% endif %}">
+                    {{ stats.latest_scrape.status }}
+                </span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-500">Time</span>
+                <span>{{ stats.latest_scrape.created_at[:19] }}</span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-500">New IPOs</span>
+                <span>{{ stats.latest_scrape.new_ipos_found or 0 }}</span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-500">Changes</span>
+                <span>{{ stats.latest_scrape.status_changes or 0 }}</span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-500">Duration</span>
+                <span>{{ "%.1f"|format((stats.latest_scrape.execution_time_ms or 0) / 1000) }}s</span>
+            </div>
+        </div>
+        {% else %}
+        <p class="text-sm text-gray-400">No scrape has run yet.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Recent Status Changes -->
+<div class="bg-white rounded-lg shadow p-4 mb-6">
+    <div class="flex justify-between items-center mb-3">
+        <h3 class="font-semibold">Recent Status Changes</h3>
+        <a href="/dashboard/logs" class="text-sm text-blue-600 hover:underline">View all →</a>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="text-left text-gray-500 border-b">
+                    <th class="pb-2">Company</th>
+                    <th class="pb-2">Change</th>
+                    <th class="pb-2">When</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for change in recent_changes[:10] %}
+                <tr class="border-b border-gray-100">
+                    <td class="py-2">
+                        <a href="/dashboard/ipos/{{ change.ipo_id }}" class="text-blue-600 hover:underline">
+                            {{ change.company_name }}
+                        </a>
+                    </td>
+                    <td class="py-2">
+                        <span class="text-gray-400">{{ change.old_status or '—' }}</span>
+                        <span class="mx-1">→</span>
+                        <span class="font-semibold">{{ change.new_status }}</span>
+                    </td>
+                    <td class="py-2 text-gray-500">{{ change.change_date[:19] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+    <a href="/dashboard/ipos/add" class="bg-white rounded-lg shadow p-4 hover:shadow-md transition text-center">
+        <p class="text-2xl mb-1">➕</p>
+        <p class="text-sm font-medium">Add IPO</p>
+    </a>
+    <a href="/dashboard/scrape" class="bg-white rounded-lg shadow p-4 hover:shadow-md transition text-center">
+        <p class="text-2xl mb-1">🔄</p>
+        <p class="text-sm font-medium">Re-scrape All</p>
+    </a>
+    <a href="/dashboard/ipos" class="bg-white rounded-lg shadow p-4 hover:shadow-md transition text-center">
+        <p class="text-2xl mb-1">📋</p>
+        <p class="text-sm font-medium">Browse IPOs</p>
+    </a>
+    <div class="bg-white rounded-lg shadow p-4 text-center">
+        <p class="text-2xl mb-1">📊</p>
+        <p class="text-sm font-medium">{{ stats.total_ipos }} Total</p>
+    </div>
+</div>
+
+{% endblock %}

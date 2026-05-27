@@ -68,6 +68,10 @@ class IPOMaster(Base):
     data_confidence: Mapped[float] = mapped_column(Float, default=0.0)
     source_count: Mapped[int] = mapped_column(Integer, default=0)  # How many sources found this IPO
     
+    # Lifecycle phase
+    phase: Mapped[str] = mapped_column(String(20), default="discovered", index=True)
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    
     # Full source data (JSON blobs for debugging)
     sebi_data: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
     bse_data: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)

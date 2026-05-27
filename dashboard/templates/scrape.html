@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Scrape Monitor - IPO Dashboard{% endblock %}
+{% block heading %}Scrape Monitor{% endblock %}
+{% block content %}
+
+<div class="bg-white rounded-lg shadow p-6 mb-6">
+    <h3 class="font-semibold mb-3">Trigger a Scrape</h3>
+    <p class="text-sm text-gray-500 mb-4">Fetch latest IPO data from SEBI, BSE, and NSE. This will update all IPO statuses and discover new filings.</p>
+    <div class="flex gap-3">
+        <form action="/dashboard/scrape/run" method="post">
+            <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">🔄 Full Scrape</button>
+        </form>
+        <form action="/dashboard/scrape/run?resolve_docs=true" method="post">
+            <button type="submit" class="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">⬇️ Scrape + Resolve Docs</button>
+        </form>
+        <a href="/dashboard/scrape" class="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">Refresh Status</a>
+    </div>
+</div>
+
+{% if scrape_result %}
+<div class="bg-white rounded-lg shadow p-6 mb-6">
+    <h3 class="font-semibold mb-3">Last Scrape Result</h3>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-gray-50 rounded p-3 text-center">
+            <p class="text-2xl font-bold {% if scrape_result.status == 'success' %}text-green-600{% else %}text-red-600{% endif %}">
+                {{ scrape_result.total_unique }}
+            </p>
+            <p class="text-xs text-gray-500">Unique IPOs</p>
+        </div>
+        <div class="bg-gray-50 rounded p-3 text-center">
+            <p class="text-2xl font-bold text-blue-600">{{ scrape_result.new_ipos_found }}</p>
+            <p class="text-xs text-gray-500">New IPOs</p>
+        </div>
+        <div class="bg-gray-50 rounded p-3 text-center">
+            <p class="text-2xl font-bold text-orange-600">{{ scrape_result.status_changes_detected }}</p>
+            <p class="text-xs text-gray-500">Status Changes</p>
+        </div>
+        <div class="bg-gray-50 rounded p-3 text-center">
+            <p class="text-2xl font-bold">{{ "%.1f"|format(scrape_result.execution_time_ms / 1000) }}s</p>
+            <p class="text-xs text-gray-500">Duration</p>
+        </div>
+    </div>
+    {% if scrape_result.documents_resolved %}
+    <div class="mt-4 p-3 bg-blue-50 rounded">
+        <p class="text-sm font-medium">Documents Resolved</p>
+        <p class="text-sm text-gray-600">
+            {{ scrape_result.documents_resolved.processed }} processed,
+            {{ scrape_result.documents_resolved.failed }} failed,
+            {{ scrape_result.documents_resolved.total_chars:, }} total chars
+        </p>
+    </div>
+    {% endif %}
+    {% if scrape_result.errors %}
+    <div class="mt-4 p-3 bg-red-50 rounded">
+        <p class="text-sm font-medium text-red-700">{{ scrape_result.errors|length }} Errors</p>
+        {% for e in scrape_result.errors[:5] %}
+        <p class="text-xs text-red-600 mt-1">{{ e.source }}: {{ e.error[:100] }}</p>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Recent Scrapes -->
+<div class="bg-white rounded-lg shadow p-4">
+    <h3 class="font-semibold mb-3">Recent Scrape Runs</h3>
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-left text-gray-500 border-b">
+                <th class="pb-2">Time</th>
+                <th class="pb-2">Status</th>
+                <th class="pb-2">Action</th>
+                <th class="pb-2">New IPOs</th>
+                <th class="pb-2">Changes</th>
+                <th class="pb-2">Duration</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in recent_logs %}
+            <tr class="border-b border-gray-100">
+                <td class="py-2 text-gray-500">{{ log.created_at[:19] }}</td>
+                <td class="py-2">
+                    <span class="px-2 py-0.5 rounded text-xs font-medium
+                        {% if log.status == 'success' %}bg-green-100 text-green-800
+                        {% elif log.status == 'error' %}bg-red-100 text-red-800
+                        {% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                        {{ log.status }}
+                    </span>
+                </td>
+                <td class="py-2">{{ log.action }}</td>
+                <td class="py-2">{{ log.new_ipos_found or '-' }}</td>
+                <td class="py-2">{{ log.status_changes or '-' }}</td>
+                <td class="py-2 text-gray-500">{{ "%.1f"|format((log.execution_time_ms or 0) / 1000) }}s</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}

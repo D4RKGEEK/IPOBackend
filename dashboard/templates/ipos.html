@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}IPO List - IPO Dashboard{% endblock %}
+{% block heading %}
+<div class="flex items-center justify-between w-full">
+    <span>IPO List</span>
+    <a href="/dashboard/ipos/add" class="text-sm bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700">+ Add IPO</a>
+</div>
+{% endblock %}
+{% block content %}
+
+<!-- Filters -->
+<div class="bg-white rounded-lg shadow p-4 mb-4">
+    <form method="get" class="flex flex-wrap gap-3 items-end">
+        <div>
+            <label class="text-xs text-gray-500 block">Search</label>
+            <input type="text" name="search" value="{{ search }}" placeholder="Company name..." class="border rounded px-3 py-1.5 text-sm w-48">
+        </div>
+        <div>
+            <label class="text-xs text-gray-500 block">Status</label>
+            <select name="status" class="border rounded px-3 py-1.5 text-sm">
+                <option value="all" {% if status == 'all' %}selected{% endif %}>All</option>
+                <option value="drhp_filed" {% if status == 'drhp_filed' %}selected{% endif %}>DRHP Filed</option>
+                <option value="sebi_approved" {% if status == 'sebi_approved' %}selected{% endif %}>SEBI Approved</option>
+                <option value="rhp_filed" {% if status == 'rhp_filed' %}selected{% endif %}>RHP Filed</option>
+                <option value="open" {% if status == 'open' %}selected{% endif %}>Open</option>
+                <option value="listed" {% if status == 'listed' %}selected{% endif %}>Listed</option>
+            </select>
+        </div>
+        <div>
+            <label class="text-xs text-gray-500 block">Phase</label>
+            <select name="phase" class="border rounded px-3 py-1.5 text-sm">
+                <option value="all" {% if phase == 'all' %}selected{% endif %}>All</option>
+                <option value="discovered" {% if phase == 'discovered' %}selected{% endif %}>Discovered</option>
+                <option value="downloaded" {% if phase == 'downloaded' %}selected{% endif %}>Downloaded</option>
+                <option value="parsed" {% if phase == 'parsed' %}selected{% endif %}>Parsed</option>
+                <option value="published" {% if phase == 'published' %}selected{% endif %}>Published</option>
+            </select>
+        </div>
+        <button type="submit" class="bg-gray-200 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-300">Filter</button>
+        <a href="/dashboard/ipos" class="text-sm text-blue-600 hover:underline">Clear</a>
+    </form>
+</div>
+
+<!-- Table -->
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-left">
+            <tr>
+                <th class="px-4 py-3 font-medium text-gray-600">ID</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Company</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Status</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Platform</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Phase</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Filed</th>
+                <th class="px-4 py-3 font-medium text-gray-600">Docs</th>
+                <th class="px-4 py-3 font-medium text-gray-600"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ipo in ipos %}
+            <tr class="border-t hover:bg-gray-50">
+                <td class="px-4 py-3 text-gray-500">{{ ipo.id }}</td>
+                <td class="px-4 py-3">
+                    <a href="/dashboard/ipos/{{ ipo.id }}" class="text-blue-600 hover:underline font-medium">
+                        {{ ipo.company_name }}
+                    </a>
+                </td>
+                <td class="px-4 py-3">
+                    <span class="px-2 py-0.5 rounded-full text-xs font-medium 
+                        {% if ipo.status == 'drhp_filed' %}bg-yellow-100 text-yellow-800
+                        {% elif ipo.status == 'sebi_approved' %}bg-blue-100 text-blue-800
+                        {% elif ipo.status == 'rhp_filed' %}bg-indigo-100 text-indigo-800
+                        {% elif ipo.status == 'open' %}bg-green-100 text-green-800
+                        {% elif ipo.status == 'listed' %}bg-teal-100 text-teal-800
+                        {% else %}bg-gray-100 text-gray-800{% endif %}">
+                        {{ ipo.status }}
+                    </span>
+                </td>
+                <td class="px-4 py-3">{{ ipo.platform or '-' }}</td>
+                <td class="px-4 py-3">
+                    <span class="px-2 py-0.5 rounded-full text-xs font-medium
+                        {% if ipo.phase == 'published' %}bg-green-100 text-green-800
+                        {% elif ipo.phase == 'parsed' %}bg-blue-100 text-blue-800
+                        {% elif ipo.phase == 'downloaded' %}bg-purple-100 text-purple-800
+                        {% else %}bg-gray-100 text-gray-800{% endif %}">
+                        {{ ipo.phase }}
+                    </span>
+                </td>
+                <td class="px-4 py-3 text-gray-500">{{ ipo.drhp_filed_date or '-' }}</td>
+                <td class="px-4 py-3">
+                    <span title="DRHP" class="{% if ipo.drhp_url %}text-green-600{% else %}text-gray-300{% endif %}">📄</span>
+                    <span title="RHP" class="ml-1 {% if ipo.rhp_url %}text-green-600{% else %}text-gray-300{% endif %}">📑</span>
+                </td>
+                <td class="px-4 py-3">
+                    <a href="/dashboard/ipos/{{ ipo.id }}" class="text-blue-600 hover:underline text-xs">View</a>
+                    <a href="/dashboard/ipos/{{ ipo.id }}/delete" class="ml-2 text-red-600 hover:underline text-xs" onclick="return confirm('Delete {{ ipo.company_name }}?')">Delete</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Pagination -->
+<div class="mt-4 flex justify-between items-center">
+    <p class="text-sm text-gray-500">Page {{ page }} of {{ total_pages }} ({{ total }} IPOs)</p>
+    <div class="flex gap-2">
+        {% if page > 1 %}
+        <a href="?page={{ page - 1 }}&search={{ search }}&status={{ status }}&phase={{ phase }}" class="px-3 py-1 bg-white border rounded text-sm hover:bg-gray-50">← Prev</a>
+        {% endif %}
+        {% if page < total_pages %}
+        <a href="?page={{ page + 1 }}&search={{ search }}&status={{ status }}&phase={{ phase }}" class="px-3 py-1 bg-white border rounded text-sm hover:bg-gray-50">Next →</a>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}
