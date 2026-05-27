@@ -28,6 +28,7 @@ from .schemas import (
     IPOResponse, IPOSummary, IPOSummarySource,
     Meta, Pagination,
     StatusChangeItem, ScraperLogItem, RefreshResult,
+    IPODetail, DocumentTextInfo, StatusHistoryEntry,
 )
 from .status import compute_status, compute_dates, compute_documents
 from .scraper_service import ScraperService, _record_to_ipo_data, _source_count
@@ -171,20 +172,91 @@ async def get_ipos(
 
 @app.get(
     "/api/ipos/{ipo_id}",
+    response_model=IPODetail,
     tags=["Aggregation"],
-    summary="Get a single IPO by ID",
+    summary="Get a single IPO by ID — includes status history and extracted text",
+    description="""
+Returns everything for one IPO:
+- Company info, status, dates, documents
+- Which documents have been processed (text extracted)
+- Status history (every status change ever detected)
+- Extracted document text (preview + metadata)
+- Raw source data (with ?raw=true)
+""",
 )
 async def get_ipo_by_id(
     ipo_id: int = Path(..., description="IPO database ID"),
     raw: bool = Query(False, description="Include source-level data"),
+    text_preview: int = Query(
+        500, ge=0, le=5000,
+        description="Max chars of text preview per document (0 = no preview)"
+    ),
 ):
     ipo = db_service.get_ipo_by_id(ipo_id)
     if not ipo:
         raise HTTPException(status_code=404, detail="IPO not found")
     
-    result = _format_ipo(ipo.to_dict(), raw=raw)
-    result["status_history"] = db_service.get_status_history(ipo_id, limit=50)
-    return result
+    d = ipo.to_dict()
+    
+    # Status history
+    status_history = db_service.get_status_history(ipo_id, limit=50)
+    
+    # Document texts
+    doc_texts = {}
+    for doc_type in ("drhp", "rhp", "final_prospectus"):
+        text = db_service.get_document_text(ipo_id, doc_type)
+        processed = bool(d.get(f"{doc_type}_processed", 0))
+        url = d.get(f"{doc_type}_url")
+        doc_texts[doc_type] = DocumentTextInfo(
+            processed=processed,
+            char_count=len(text) if text else 0,
+            source_url=url,
+            text_preview=text[:text_preview] if text and text_preview > 0 else None,
+        )
+    
+    # Build the full detail response
+    return IPODetail(
+        id=ipo.id,
+        company_name=d["company_name"],
+        normalized_name=d.get("normalized_name", ""),
+        status=d.get("status", "unknown"),
+        dates={
+            "drhp_filed": d.get("drhp_filed_date"),
+            "rhp_filed": d.get("rhp_filed_date"),
+            "fp_filed": d.get("fp_filed_date"),
+            "open": d.get("open_date"),
+            "close": d.get("close_date"),
+        },
+        documents={
+            "drhp": d.get("drhp_url"),
+            "rhp": d.get("rhp_url"),
+            "final_prospectus": d.get("final_prospectus_url"),
+            "abridged_prospectus": d.get("abridged_prospectus_url"),
+        },
+        documents_processed={
+            "drhp": bool(d.get("drhp_processed", 0)),
+            "rhp": bool(d.get("rhp_processed", 0)),
+            "final_prospectus": bool(d.get("final_prospectus_processed", 0)),
+        },
+        price_band=d.get("price_band"),
+        platform=d.get("platform"),
+        issue_type=d.get("issue_type"),
+        data_confidence=d.get("data_confidence", 0.0),
+        source_count=d.get("source_count", 0),
+        first_seen=d.get("first_seen"),
+        last_updated=d.get("last_updated"),
+        last_scraped=d.get("last_scraped"),
+        raw=IPOSummarySource(
+            sebi=d.get("sebi_data"),
+            bse=d.get("bse_data"),
+            nse=d.get("nse_data"),
+            bse_sme=d.get("bse_sme_data"),
+        ) if raw else None,
+        status_history=[
+            StatusHistoryEntry(**h) for h in status_history
+        ],
+        document_texts=doc_texts,
+    )
 
 
 # ─── Status Changes ──────────────────────────────────────────
@@ -340,6 +412,10 @@ def _format_ipo(ipo: dict[str, Any], raw: bool = False) -> IPOSummary:
             "rhp": ipo.get("rhp_url"),
             "final_prospectus": ipo.get("final_prospectus_url"),
             "abridged_prospectus": ipo.get("abridged_prospectus_url"),
+        },
+        documents_processed={
+            "drhp": bool(ipo.get("drhp_processed", 0)),
+            "rhp": bool(ipo.get("rhp_processed", 0)),
         },
         price_band=ipo.get("price_band"),
         platform=ipo.get("platform"),

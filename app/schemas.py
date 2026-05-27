@@ -116,6 +116,7 @@ class IPOSummary(BaseModel):
     status: str = 'unknown'
     dates: dict[str, Optional[str]] = Field(default_factory=dict)
     documents: dict[str, Optional[str]] = Field(default_factory=dict)
+    documents_processed: dict[str, bool] = Field(default_factory=dict)
     price_band: Optional[str] = None
     platform: Optional[str] = None
     issue_type: Optional[str] = None
@@ -165,6 +166,48 @@ class RefreshResult(BaseModel):
     status_changes_detected: int
     execution_time_ms: int
     errors: list[dict[str, str]] = Field(default_factory=list)
+
+
+class DocumentTextInfo(BaseModel):
+    """Extracted text info for a document."""
+    processed: bool = False
+    char_count: int = 0
+    source_url: Optional[str] = None
+    text_preview: Optional[str] = None
+    extraction_date: Optional[str] = None
+
+
+class StatusHistoryEntry(BaseModel):
+    """A single status change record (without IPO context — used inside IPO detail)."""
+    id: int
+    old_status: Optional[str] = None
+    new_status: str
+    change_date: str
+    source: str
+    triggered_by: str
+    details: Optional[dict] = None
+
+
+class IPODetail(BaseModel):
+    """Complete IPO detail including status history and document texts."""
+    id: int
+    company_name: str
+    normalized_name: str
+    status: str
+    dates: dict[str, Optional[str]] = Field(default_factory=dict)
+    documents: dict[str, Optional[str]] = Field(default_factory=dict)
+    documents_processed: dict[str, bool] = Field(default_factory=dict)
+    price_band: Optional[str] = None
+    platform: Optional[str] = None
+    issue_type: Optional[str] = None
+    data_confidence: float = 0.0
+    source_count: int = 0
+    first_seen: Optional[str] = None
+    last_updated: Optional[str] = None
+    last_scraped: Optional[str] = None
+    raw: Optional[IPOSummarySource] = None
+    status_history: list[StatusHistoryEntry] = Field(default_factory=list)
+    document_texts: dict[str, DocumentTextInfo] = Field(default_factory=dict)
 
 
 class Meta(BaseModel):
