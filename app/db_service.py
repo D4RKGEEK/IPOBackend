@@ -66,7 +66,7 @@ class DatabaseService:
                 )
 
             total = query.count()
-            query = query.order_by(IPOMaster.last_updated.desc())
+            query = query.order_by(IPOMaster.id.desc())  # newest IPOs first
             query = query.offset((page - 1) * per_page).limit(per_page)
 
             return [row.to_dict() for row in query.all()], total

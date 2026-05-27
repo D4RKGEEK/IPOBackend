@@ -112,6 +112,7 @@ class IPOSummarySource(BaseModel):
 
 class IPOSummary(BaseModel):
     """Clean, unified IPO record for the frontend."""
+    id: int
     company_name: str
     status: str = 'unknown'
     dates: dict[str, Optional[str]] = Field(default_factory=dict)

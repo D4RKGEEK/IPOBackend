@@ -398,6 +398,7 @@ def _format_ipo(ipo: dict[str, Any], raw: bool = False) -> IPOSummary:
     """Convert a DB record dict into an IPOSummary response."""
     docs = ipo.get("documents", {})
     result = IPOSummary(
+        id=ipo.get("id", 0),
         company_name=ipo["company_name"],
         status=ipo.get("status", "unknown"),
         dates={
