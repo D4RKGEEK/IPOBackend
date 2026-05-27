@@ -374,13 +374,17 @@ async def get_ipo_document_text(
 @app.post(
     "/api/ipos/{ipo_id}/parse",
     tags=["Parsing"],
-    summary="Extract structured data from IPO documents",
+    summary="Run Phase 2 parsing pipeline",
     description="""
-Runs all parsers on the extracted document text for this IPO.
-Parses DRHP, RHP, and Final Prospectus (all available docs).
-Returns structured data: issue details, financials, promoters, intermediaries, etc.
+Complete parsing pipeline:
+1. Collects all documents with extracted text
+2. Runs regex extractors on each
+3. Merges results across document types
+4. Auto-falls back to DeepSeek if API key configured
+5. Saves structured data to DB
 
-Results are saved in the database for fast retrieval.
+Returns issue details, company info, financials, KPIs, promoters, etc.
+No null fields — defaults provided.
 """,
 )
 async def parse_ipo_documents(
@@ -390,47 +394,20 @@ async def parse_ipo_documents(
     if not ipo:
         raise HTTPException(status_code=404, detail="IPO not found")
     
-    # Get all available document texts
-    drhp_text = db_service.get_document_text(ipo_id, "drhp")
-    rhp_text = db_service.get_document_text(ipo_id, "rhp")
-    fp_text = db_service.get_document_text(ipo_id, "final_prospectus")
+    from app.parsers.pipeline_v2 import parse_ipo as run_pipeline
     
-    if not any([drhp_text, rhp_text, fp_text]):
+    try:
+        result = run_pipeline(ipo_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    if result.get("status") == "no_text":
         raise HTTPException(
-            status_code=404,
-            detail="No extracted text found. Run POST /api/ipos/{id}/resolve first."
+            status_code=400,
+            detail=result["message"],
         )
     
-    import time
-    start = time.monotonic()
-    
-    result = parse_all_available(
-        drhp_text=drhp_text,
-        rhp_text=rhp_text,
-        fp_text=fp_text,
-        company_name=ipo.company_name,
-    )
-    
-    # Save to DB
-    processing_ms = int((time.monotonic() - start) * 1000)
-    result.parsing_time_ms = processing_ms
-    
-    db_service.save_parsed_ipo_data(
-        ipo_id=ipo_id,
-        parsed_data=result.model_dump(),
-        document_type="merged",
-        confidence_score=result.confidence_score,
-        processing_time_ms=processing_ms,
-    )
-    
-    return {
-        "ipo_id": ipo_id,
-        "company_name": result.company_name,
-        "status": result.status,
-        "confidence_score": result.confidence_score,
-        "parsing_time_ms": processing_ms,
-        "data": result.model_dump(),
-    }
+    return result
 
 
 @app.get(
