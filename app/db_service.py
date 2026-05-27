@@ -660,6 +660,36 @@ class DatabaseService:
             session.commit()
             return True
 
+    def update_document_phase_by_ipo(
+        self,
+        ipo_id: int,
+        doc_type: str,
+        phase: str,
+    ) -> bool:
+        """Update document phase by IPO ID and doc type."""
+        with self._session() as session:
+            doc = (
+                session.query(IPODocument)
+                .filter(
+                    IPODocument.ipo_master_id == ipo_id,
+                    IPODocument.doc_type == doc_type,
+                )
+                .first()
+            )
+            if not doc:
+                return False
+            doc.phase = phase
+            now = datetime.now(timezone.utc)
+            if phase == "downloaded":
+                doc.downloaded_at = now
+            elif phase == "parsed":
+                doc.parsed_at = now
+            elif phase == "published":
+                doc.published_at = now
+            doc.last_updated = now
+            session.commit()
+            return True
+
     def delete_document(self, doc_id: int) -> bool:
         """Delete a document record."""
         with self._session() as session:

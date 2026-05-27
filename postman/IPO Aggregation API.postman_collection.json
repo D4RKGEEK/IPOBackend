@@ -90,6 +90,14 @@
             "url": "{{base_url}}/api/ipos/1/parsed-data",
             "description": "Structured data extracted from documents: issue details, capital structure, financials, KPIs, promoters."
           }
+        },
+        {
+          "name": "Get Sections (new)",
+          "request": {
+            "method": "GET",
+            "url": "{{base_url}}/api/ipos/1/sections",
+            "description": "Returns all extracted sections from IPO documents with char counts and predicted fields per section."
+          }
         }
       ]
     },
@@ -122,11 +130,18 @@
           }
         },
         {
-          "name": "Parse IPO",
+          "name": "Parse IPO (section-based + DeepSeek)",
           "request": {
             "method": "POST",
-            "url": "{{base_url}}/api/ipos/1/parse",
-            "description": "Run Phase 2 parsing pipeline: regex extractors + optional DeepSeek fallback. Saves to DB."
+            "url": {
+              "raw": "{{base_url}}/api/ipos/1/parse?use_deepseek=true",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ipos", "1", "parse"],
+              "query": [
+                { "key": "use_deepseek", "value": "true", "description": "Use DeepSeek as fallback for table-heavy sections. Default: true. Requires DEEPSEEK_API_KEY in .env" }
+              ]
+            },
+            "description": "Phase 2 section-based parsing: extracts sections via ToC detection, runs regex per section, falls back to DeepSeek for tables."
           }
         },
         {

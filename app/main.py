@@ -288,18 +288,19 @@ async def resolve_ipo_documents(
     
     import httpx
     from app.pdf_utils import extract_document
+    from app.db_models import get_session, IPODocument
 
     d = ipo.to_dict()
     docs = d.get("documents", {})
-    if not docs or not isinstance(docs, dict):
-        docs = {
-            "drhp": getattr(ipo, "drhp_url", None),
-            "rhp": getattr(ipo, "rhp_url", None),
-            "final_prospectus": getattr(ipo, "final_prospectus_url", None),
-        }
     
     results = {}
     errors = []
+    
+    # Ensure we have ipo_documents records for existing URLs
+    for doc_type in ("drhp", "rhp", "final_prospectus"):
+        url = docs.get(doc_type)
+        if url:
+            db_service.upsert_document(ipo_id, doc_type, url)
     
     async with httpx.AsyncClient(follow_redirects=True, timeout=180) as client:
         for doc_type in ("drhp", "rhp", "final_prospectus"):
@@ -308,22 +309,19 @@ async def resolve_ipo_documents(
                 results[doc_type] = {"status": "skipped", "reason": "no URL"}
                 continue
             
-            # Skip if already processed
-            processed_field = f"{doc_type}_processed"
-            if getattr(ipo, processed_field, 0):
-                # Check if text already in DB
-                existing = db_service.get_document_text(ipo_id, doc_type)
-                if existing:
-                    results[doc_type] = {"status": "already_done", "chars": len(existing)}
-                    continue
+            existing = db_service.get_document_text(ipo_id, doc_type)
+            if existing:
+                db_service.update_document_phase_by_ipo(ipo_id, doc_type, "downloaded")
+                results[doc_type] = {"status": "already_done", "chars": len(existing)}
+                continue
             
-            # Download and extract
             try:
                 result = await extract_document(url, client)
                 text = result["text"] if result else None
                 if text:
                     db_service.save_document_text(ipo_id, doc_type, text, url)
                     db_service.mark_document_processed(ipo_id, doc_type)
+                    db_service.update_document_phase_by_ipo(ipo_id, doc_type, "downloaded")
                     results[doc_type] = {"status": "ok", "chars": len(text)}
                 else:
                     errors.append({"doc_type": doc_type, "error": "no text extracted"})
@@ -388,6 +386,7 @@ No null fields — defaults provided.
 )
 async def parse_ipo_documents(
     ipo_id: int = Path(..., description="IPO database ID"),
+    use_deepseek: bool = Query(True, description="Use DeepSeek as fallback for table-heavy sections"),
 ):
     ipo = db_service.get_ipo_by_id(ipo_id)
     if not ipo:
@@ -396,7 +395,7 @@ async def parse_ipo_documents(
     from app.parsers.pipeline_v2 import parse_ipo as run_pipeline
     
     try:
-        result = run_pipeline(ipo_id)
+        result = run_pipeline(ipo_id, use_deepseek=use_deepseek)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
@@ -405,6 +404,48 @@ async def parse_ipo_documents(
             status_code=400,
             detail=result["message"],
         )
+    
+    return result
+
+
+@app.get(
+    "/api/ipos/{ipo_id}/sections",
+    tags=["Parsing"],
+    summary="Get extracted sections for an IPO's documents",
+    description="""
+Returns the sections extracted from an IPO's documents
+with character counts and field predictions per section.
+""",
+)
+async def get_ipo_sections(
+    ipo_id: int = Path(..., description="IPO database ID"),
+):
+    ipo = db_service.get_ipo_by_id(ipo_id)
+    if not ipo:
+        raise HTTPException(status_code=404, detail="IPO not found")
+    
+    from app.parsers.pipeline_v2 import extract_sections, SECTION_FIELDS
+    
+    result = {"ipo_id": ipo_id, "company_name": ipo.company_name, "documents": {}}
+    
+    for doc_type in ("drhp", "rhp", "final_prospectus"):
+        text = db_service.get_document_text(ipo_id, doc_type)
+        if not text:
+            continue
+        
+        sections = {}
+        for name, section_text in extract_sections(text).items():
+            fields = SECTION_FIELDS.get(name, [])
+            sections[name] = {
+                "chars": len(section_text),
+                "predicted_fields": fields,
+            }
+        
+        result["documents"][doc_type] = {
+            "total_chars": len(text),
+            "section_count": len(sections),
+            "sections": sections,
+        }
     
     return result
 
