@@ -32,6 +32,7 @@ from app.schemas import IPORecord
 from app.status import compute_status, compute_dates, compute_documents
 from app.utils import normalize_company_name
 from app.db_service import DatabaseService
+from app.pdf_utils import download_and_extract_text
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,9 @@ class ScraperService:
     async def run_full_scrape(
         self,
         bse_sme: bool = True,
-        include_pdf_urls: bool = True,  # Fetch actual PDFs from SEBI detail pages
+        include_pdf_urls: bool = True,
+        resolve_docs: bool = False,  # New: resolve ZIPs and extract text after scrape
+        resolve_doc_limit: int = 20,
     ) -> dict[str, Any]:
         """
         Scrape all sources, diff against DB, return a report.
@@ -240,7 +243,13 @@ class ScraperService:
 
         self.logger.info(f"Scrape complete in {scrape_duration_ms}ms. {new_count} new, {change_count} changes.")
 
-        return {
+        # Optional: resolve ZIPs and extract text for unprocessed documents
+        doc_result = {}
+        if resolve_docs:
+            self.logger.info(f"Resolving documents (limit={resolve_doc_limit})...")
+            doc_result = await self.resolve_document_texts(limit=resolve_doc_limit)
+
+        result = {
             "status": status,
             "total_raw": len(results),
             "total_unique": len(deduped),
@@ -248,6 +257,107 @@ class ScraperService:
             "status_changes_detected": change_count,
             "execution_time_ms": scrape_duration_ms,
             "errors": errors,
+        }
+        if doc_result:
+            result["documents_resolved"] = doc_result
+        
+        return result
+
+    async def resolve_document_texts(
+        self,
+        limit: int = 20,  # Process at most 20 per run to keep total time reasonable
+        max_workers: int = 3,  # Process up to 3 concurrently
+    ) -> dict[str, Any]:
+        """
+        After a scrape, resolve ZIP URLs to PDF text for unprocessed documents.
+        
+        Downloads ZIPs, extracts PDFs, extracts text, stores in DB.
+        Only processes documents not marked as processed yet.
+        Skips heavy files (>50MB), reports failures without crashing.
+        """
+        unprocessed = self.db.get_unprocessed_documents(limit=limit)
+        if not unprocessed:
+            return {"processed": 0, "failed": 0, "skipped": 0, "total_chars": 0}
+
+        self.logger.info(f"Resolving {len(unprocessed)} unprocessed documents...")
+        
+        processed = 0
+        failed = 0
+        skipped = 0
+        total_chars = 0
+
+        import httpx
+        semaphore = asyncio.Semaphore(max_workers)
+
+        async def resolve_one(ipo: dict) -> None:
+            nonlocal processed, failed, skipped, total_chars
+            ipo_id = ipo["id"]
+            name = ipo["company_name"]
+            docs = ipo.get("documents", {})
+            if not docs:
+                docs = {
+                    "drhp": ipo.get("drhp_url"),
+                    "rhp": ipo.get("rhp_url"),
+                    "final_prospectus": ipo.get("final_prospectus_url"),
+                }
+
+            async with semaphore:
+                for doc_type in ("drhp", "rhp", "final_prospectus"):
+                    url = docs.get(doc_type)
+                    if not url:
+                        continue
+                    
+                    # Skip already-processed
+                    processed_field = f"{doc_type}_processed"
+                    if ipo.get(processed_field, 0):
+                        continue
+
+                    # Check if already have text in DB
+                    existing = self.db.get_document_text(ipo_id, doc_type)
+                    if existing:
+                        self.logger.info(f"  [{name}] {doc_type} already has text ({len(existing):,} chars)")
+                        self.db.mark_document_processed(ipo_id, doc_type)
+                        processed += 1
+                        continue
+
+                    # Only extract if it's a ZIP or a PDF that hasn't been done
+                    if not url.lower().endswith((".pdf", ".zip")):
+                        skipped += 1
+                        continue
+
+                    try:
+                        async with httpx.AsyncClient(
+                            follow_redirects=True, timeout=60
+                        ) as client:
+                            text = await download_and_extract_text(url, client)
+                        
+                        if text:
+                            self.db.save_document_text(ipo_id, doc_type, text, url)
+                            self.db.mark_document_processed(ipo_id, doc_type)
+                            processed += 1
+                            total_chars += len(text)
+                            self.logger.info(
+                                f"  ✓ {name} - {doc_type}: {len(text):,} chars"
+                            )
+                        else:
+                            self.logger.warning(f"  ✗ {name} - {doc_type}: no text extracted")
+                            failed += 1
+                    except Exception as e:
+                        self.logger.error(f"  ✗ {name} - {doc_type}: {e}")
+                        failed += 1
+
+        await asyncio.gather(*[resolve_one(ipo) for ipo in unprocessed])
+        
+        self.logger.info(
+            f"Document resolution: {processed} processed, {failed} failed, "
+            f"{skipped} skipped, {total_chars:,} total chars"
+        )
+        
+        return {
+            "processed": processed,
+            "failed": failed,
+            "skipped": skipped,
+            "total_chars": total_chars,
         }
 
 
@@ -262,12 +372,16 @@ def main():
     parser = argparse.ArgumentParser(description="IPO Scraper Service")
     parser.add_argument("--no-pdf-urls", action="store_true", help="Skip fetching PDF URLs from SEBI detail pages")
     parser.add_argument("--no-bse-sme", action="store_true", help="Skip BSE SME scraping")
+    parser.add_argument("--resolve-docs", action="store_true", help="Resolve ZIP URLs and extract PDF text after scraping")
+    parser.add_argument("--resolve-limit", type=int, default=50, help="Max documents to resolve (default: 50)")
     args = parser.parse_args()
 
     service = ScraperService()
     report = asyncio.run(service.run_full_scrape(
         bse_sme=not args.no_bse_sme,
         include_pdf_urls=not args.no_pdf_urls,
+        resolve_docs=args.resolve_docs,
+        resolve_doc_limit=args.resolve_limit,
     ))
 
     print(f"\n{'='*50}")

@@ -214,12 +214,23 @@ Scrapes SEBI, BSE, and NSE concurrently, diffs against the database,
 and saves any new IPOs or status changes.
 
 Returns a report with: total found, new IPOs, status changes, errors, timing.
+
+**With `?resolve_docs=true`**, also downloads ZIPs and extracts PDF text for unprocessed documents.
 """,
 )
-async def refresh():
+async def refresh(
+    resolve_docs: bool = Query(
+        False, description="Also resolve ZIP URLs and extract PDF text into DB"
+    ),
+    resolve_limit: int = Query(
+        50, ge=1, le=200, description="Max documents to resolve if resolve_docs=true"
+    ),
+):
     report = await scraper_service.run_full_scrape(
         bse_sme=True,
         include_pdf_urls=True,
+        resolve_docs=resolve_docs,
+        resolve_doc_limit=resolve_limit,
     )
     return report
 

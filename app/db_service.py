@@ -14,6 +14,7 @@ from .db_models import (
     IPOMaster,
     IPOStatusHistory,
     ScraperLog,
+    IPOParsedData,
     init_db,
     get_session,
 )
@@ -205,7 +206,100 @@ class DatabaseService:
                 })
             return results
 
-    # ─── Dashboard Stats ───────────────────────────────────
+    # ─── Document Processing ─────────────────────────────
+
+    def get_unprocessed_documents(self, limit: int = 50) -> list[dict[str, Any]]:
+        """
+        Get IPOs with document URLs that haven't been processed yet.
+        Returns IPOs with ZIP URLs (or any URL that was never extracted).
+        """
+        from sqlalchemy import or_
+        with self._session() as session:
+            rows = (
+                session.query(IPOMaster)
+                .filter(
+                    or_(
+                        # DRHP not processed AND has a URL
+                        IPOMaster.drhp_processed == 0,
+                        IPOMaster.rhp_processed == 0,
+                    ),
+                    or_(
+                        IPOMaster.drhp_url.isnot(None),
+                        IPOMaster.rhp_url.isnot(None),
+                        IPOMaster.final_prospectus_url.isnot(None),
+                    ),
+                )
+                .order_by(IPOMaster.last_updated.desc())
+                .limit(limit)
+                .all()
+            )
+            return [row.to_dict() for row in rows]
+
+    def save_document_text(
+        self,
+        ipo_id: int,
+        document_type: str,  # 'drhp', 'rhp', 'final_prospectus'
+        text: str,
+        source_url: str,
+        confidence_score: float = 0.8,
+    ) -> int:
+        """Save extracted PDF text to ipo_parsed_data."""
+        from datetime import datetime, timezone
+        with self._session() as session:
+            record = IPOParsedData(
+                ipo_master_id=ipo_id,
+                data_type=f"raw_text_{document_type}",
+                extracted_data={
+                    "text": text,
+                    "source_url": source_url,
+                    "document_type": document_type,
+                    "char_count": len(text),
+                },
+                confidence_score=confidence_score,
+                extra={
+                    "extraction_method": "pymupdf",
+                    "version": "1.0",
+                },
+            )
+            session.add(record)
+            session.commit()
+            return record.id
+
+    def mark_document_processed(
+        self,
+        ipo_id: int,
+        document_type: str,  # 'drhp', 'rhp', 'final_prospectus'
+    ):
+        """Mark a document as processed (text extracted)."""
+        field = f"{document_type}_processed"
+        with self._session() as session:
+            ipo = session.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
+            if ipo and hasattr(ipo, field):
+                setattr(ipo, field, 1)
+                session.commit()
+
+    def get_document_text(
+        self,
+        ipo_id: int,
+        document_type: str,  # 'drhp', 'rhp', 'final_prospectus'
+    ) -> Optional[str]:
+        """Retrieve previously extracted text for a document."""
+        data_type = f"raw_text_{document_type}"
+        with self._session() as session:
+            record = (
+                session.query(IPOParsedData)
+                .filter(
+                    IPOParsedData.ipo_master_id == ipo_id,
+                    IPOParsedData.data_type == data_type,
+                )
+                .order_by(IPOParsedData.extraction_date.desc())
+                .first()
+            )
+            if record and record.extracted_data:
+                return record.extracted_data.get("text")
+            return None
+
+    # ─── Dashboard Stats (updated) ────────────────────────
 
     def get_dashboard_stats(self) -> dict[str, Any]:
         with self._session() as session:
@@ -231,6 +325,33 @@ class DatabaseService:
                 .filter(IPOMaster.rhp_url.isnot(None))
                 .scalar() or 0
             )
+            
+            # Document processing stats
+            drhp_processed = (
+                session.query(func.count(IPOMaster.id))
+                .filter(IPOMaster.drhp_processed == 1)
+                .scalar() or 0
+            )
+            rhp_processed = (
+                session.query(func.count(IPOMaster.id))
+                .filter(IPOMaster.rhp_processed == 1)
+                .scalar() or 0
+            )
+            unresolved_zips = (
+                session.query(func.count(IPOMaster.id))
+                .filter(
+                    IPOMaster.drhp_processed == 0,
+                    IPOMaster.drhp_url.ilike('%.zip'),
+                )
+                .scalar() or 0
+            ) + (
+                session.query(func.count(IPOMaster.id))
+                .filter(
+                    IPOMaster.rhp_processed == 0,
+                    IPOMaster.rhp_url.ilike('%.zip'),
+                )
+                .scalar() or 0
+            )
 
             recent_scrapes = (
                 session.query(ScraperLog)
@@ -239,7 +360,6 @@ class DatabaseService:
                 .all()
             )
 
-            # Latest scrape result
             latest_scrape = (
                 session.query(ScraperLog)
                 .filter(ScraperLog.action == "full_scrape")
@@ -247,7 +367,6 @@ class DatabaseService:
                 .first()
             )
 
-            # Platform distribution
             platform_counts = {}
             for row in session.query(
                 IPOMaster.platform, func.count(IPOMaster.id)
@@ -261,6 +380,9 @@ class DatabaseService:
                 "avg_confidence": round(avg_confidence, 2),
                 "total_with_drhp": total_drhp,
                 "total_with_rhp": total_rhp,
+                "drhp_processed": drhp_processed,
+                "rhp_processed": rhp_processed,
+                "unresolved_zip_links": unresolved_zips,
                 "latest_scrape": {
                     "status": latest_scrape.status if latest_scrape else None,
                     "created_at": latest_scrape.created_at.isoformat() if latest_scrape else None,
