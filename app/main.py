@@ -288,7 +288,7 @@ async def resolve_ipo_documents(
         raise HTTPException(status_code=404, detail="IPO not found")
     
     import httpx
-    from app.pdf_utils import download_and_extract_text
+    from app.pdf_utils import extract_document
 
     d = ipo.to_dict()
     docs = d.get("documents", {})
@@ -320,7 +320,8 @@ async def resolve_ipo_documents(
             
             # Download and extract
             try:
-                text = await download_and_extract_text(url, client)
+                result = await extract_document(url, client)
+                text = result["text"] if result else None
                 if text:
                     db_service.save_document_text(ipo_id, doc_type, text, url)
                     db_service.mark_document_processed(ipo_id, doc_type)

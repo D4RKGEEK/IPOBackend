@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Optional
@@ -60,7 +61,6 @@ def _extract_pdf_from_zip(zip_bytes: bytes) -> Optional[bytes]:
             pdf_files = [n for n in zf.namelist() if n.lower().endswith('.pdf')]
             if not pdf_files:
                 return None
-            # Prefer DRHP name over abridged
             pdf_files.sort(key=lambda n: (
                 0 if 'drhp' in n.lower() else 1 if 'draft' in n.lower() else 2
             ))
@@ -76,36 +76,38 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Optional[dict]:
     """
     Extract text and tables from PDF bytes using pdfplumber.
     
+    pdfplumber requires a file path — writes to a temp file, then removes it.
+    
     Returns:
         dict with:
             - text: clean full text (str)
             - tables: list of {page: N, headers: [...], rows: [[...], ...]}
             - metadata: {pages: N, has_tables: bool}
     """
+    tmp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
     try:
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        tmp.write(pdf_bytes)
+        tmp_path = tmp.name
+        tmp.close()
+        
+        with pdfplumber.open(tmp_path) as pdf:
             pages_text = []
             all_tables = []
             
             for page_num, page in enumerate(pdf.pages, 1):
-                # Clean text
                 text = page.extract_text() or ""
                 pages_text.append(text)
                 
-                # Structured tables
                 raw_tables = page.extract_tables()
                 for table in raw_tables:
-                    if not table or len(table) < 2:  # Need at least header + 1 row
+                    if not table or len(table) < 2:
                         continue
-                    
-                    # First row = headers, rest = data
                     headers = [str(h).strip() if h else "" for h in table[0]]
                     rows = []
                     for row in table[1:]:
                         clean_row = [str(c).strip() if c else "" for c in row]
-                        if any(c for c in clean_row if c):  # Skip empty rows
+                        if any(c for c in clean_row if c):
                             rows.append(clean_row)
-                    
                     if rows:
                         all_tables.append({
                             "page": page_num,
@@ -138,6 +140,13 @@ def extract_text_and_tables(pdf_bytes: bytes) -> Optional[dict]:
     except Exception as e:
         logger.warning(f"pdfplumber extraction failed: {e}")
         return None
+    
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(tmp.name)
+        except (NameError, OSError):
+            pass
 
 
 def save_cache(ipo_id: int, doc_type: str, data: dict) -> str:
@@ -169,7 +178,6 @@ async def extract_document(
     
     Returns: dict with text, tables, metadata
     """
-    # Check cache first
     if ipo_id and doc_type:
         cached = load_cache(ipo_id, doc_type)
         if cached:
@@ -194,7 +202,6 @@ async def extract_document(
     if result is None:
         return None
     
-    # Cache to local JSON
     if ipo_id and doc_type and result.get("text"):
         save_cache(ipo_id, doc_type, result)
         logger.info(f"  Cached: {_get_cache_path(ipo_id, doc_type)}")

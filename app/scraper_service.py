@@ -32,7 +32,7 @@ from app.schemas import IPORecord
 from app.status import compute_status, compute_dates, compute_documents
 from app.utils import normalize_company_name, parse_source_date, format_date
 from app.db_service import DatabaseService
-from app.pdf_utils import download_and_extract_text
+from app.pdf_utils import extract_document
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +329,8 @@ class ScraperService:
                         async with httpx.AsyncClient(
                             follow_redirects=True, timeout=60
                         ) as client:
-                            text = await download_and_extract_text(url, client)
+                            result = await extract_document(url, client)
+                            text = result["text"] if result else None
                         
                         if text:
                             self.db.save_document_text(ipo_id, doc_type, text, url)
@@ -373,7 +374,7 @@ def main():
     parser.add_argument("--no-pdf-urls", action="store_true", help="Skip fetching PDF URLs from SEBI detail pages")
     parser.add_argument("--no-bse-sme", action="store_true", help="Skip BSE SME scraping")
     parser.add_argument("--resolve-docs", action="store_true", help="Resolve ZIP URLs and extract PDF text after scraping")
-    parser.add_argument("--resolve-limit", type=int, default=50, help="Max documents to resolve (default: 50)")
+    parser.add_argument("--resolve-limit", type=int, default=50, help="Max documents to resolve (default: 50, max: 500)")
     args = parser.parse_args()
 
     service = ScraperService()
