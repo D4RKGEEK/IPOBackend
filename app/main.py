@@ -201,14 +201,27 @@ async def get_ipo_by_id(
     # Status history
     status_history = db_service.get_status_history(ipo_id, limit=50)
     
+    # Documents are nested in to_dict() under "documents" key
+    docs = d.get("documents", {})
+    if not docs or not isinstance(docs, dict):
+        docs = {
+            "drhp": d.get("drhp_url"),
+            "rhp": d.get("rhp_url"),
+            "final_prospectus": d.get("final_prospectus_url"),
+            "abridged_prospectus": d.get("abridged_prospectus_url"),
+        }
+    
     # Document texts
     doc_texts = {}
     for doc_type in ("drhp", "rhp", "final_prospectus"):
-        text = db_service.get_document_text(ipo_id, doc_type)
+        url = docs.get(doc_type)
         processed = bool(d.get(f"{doc_type}_processed", 0))
-        url = d.get(f"{doc_type}_url")
+        # Also check direct DB field as fallback
+        if not url:
+            url = d.get(f"{doc_type}_url")
+        text = db_service.get_document_text(ipo_id, doc_type)
         doc_texts[doc_type] = DocumentTextInfo(
-            processed=processed,
+            processed=processed or bool(text),
             char_count=len(text) if text else 0,
             source_url=url,
             text_preview=text[:text_preview] if text and text_preview > 0 else None,
@@ -227,12 +240,7 @@ async def get_ipo_by_id(
             "open": d.get("open_date"),
             "close": d.get("close_date"),
         },
-        documents={
-            "drhp": d.get("drhp_url"),
-            "rhp": d.get("rhp_url"),
-            "final_prospectus": d.get("final_prospectus_url"),
-            "abridged_prospectus": d.get("abridged_prospectus_url"),
-        },
+        documents=docs,
         documents_processed={
             "drhp": bool(d.get("drhp_processed", 0)),
             "rhp": bool(d.get("rhp_processed", 0)),
@@ -246,17 +254,119 @@ async def get_ipo_by_id(
         first_seen=d.get("first_seen"),
         last_updated=d.get("last_updated"),
         last_scraped=d.get("last_scraped"),
+        # Source data: read directly from ORM object
         raw=IPOSummarySource(
-            sebi=d.get("sebi_data"),
-            bse=d.get("bse_data"),
-            nse=d.get("nse_data"),
-            bse_sme=d.get("bse_sme_data"),
+            sebi=ipo.sebi_data,
+            bse=ipo.bse_data,
+            nse=ipo.nse_data,
+            bse_sme=ipo.bse_sme_data,
         ) if raw else None,
         status_history=[
             StatusHistoryEntry(**h) for h in status_history
         ],
         document_texts=doc_texts,
     )
+
+
+@app.post(
+    "/api/ipos/{ipo_id}/resolve",
+    tags=["Aggregation"],
+    summary="Resolve documents and extract text for a single IPO",
+    description="""
+Downloads document URLs (ZIP or PDF) for this IPO, extracts text,
+and stores it in the database.
+
+Returns: which documents were processed, char counts, and any errors.
+""",
+)
+async def resolve_ipo_documents(
+    ipo_id: int = Path(..., description="IPO database ID"),
+):
+    ipo = db_service.get_ipo_by_id(ipo_id)
+    if not ipo:
+        raise HTTPException(status_code=404, detail="IPO not found")
+    
+    import httpx
+    from app.pdf_utils import download_and_extract_text
+
+    d = ipo.to_dict()
+    docs = d.get("documents", {})
+    if not docs or not isinstance(docs, dict):
+        docs = {
+            "drhp": getattr(ipo, "drhp_url", None),
+            "rhp": getattr(ipo, "rhp_url", None),
+            "final_prospectus": getattr(ipo, "final_prospectus_url", None),
+        }
+    
+    results = {}
+    errors = []
+    
+    async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
+        for doc_type in ("drhp", "rhp", "final_prospectus"):
+            url = docs.get(doc_type)
+            if not url:
+                results[doc_type] = {"status": "skipped", "reason": "no URL"}
+                continue
+            
+            # Skip if already processed
+            processed_field = f"{doc_type}_processed"
+            if getattr(ipo, processed_field, 0):
+                # Check if text already in DB
+                existing = db_service.get_document_text(ipo_id, doc_type)
+                if existing:
+                    results[doc_type] = {"status": "already_done", "chars": len(existing)}
+                    continue
+            
+            # Download and extract
+            try:
+                text = await download_and_extract_text(url, client)
+                if text:
+                    db_service.save_document_text(ipo_id, doc_type, text, url)
+                    db_service.mark_document_processed(ipo_id, doc_type)
+                    results[doc_type] = {"status": "ok", "chars": len(text)}
+                else:
+                    errors.append({"doc_type": doc_type, "error": "no text extracted"})
+                    results[doc_type] = {"status": "failed", "reason": "no text extracted"}
+            except Exception as e:
+                errors.append({"doc_type": doc_type, "error": str(e)})
+                results[doc_type] = {"status": "error", "reason": str(e)[:100]}
+    
+    return {"ipo_id": ipo_id, "company_name": d["company_name"], "results": results, "errors": errors}
+
+
+@app.get(
+    "/api/ipos/{ipo_id}/text/{doc_type}",
+    tags=["Aggregation"],
+    summary="Get full extracted document text",
+    description="""
+Returns the complete extracted text for a specific document of an IPO.
+
+doc_type: drhp, rhp, or final_prospectus
+
+Returns text as plain text (not JSON) for easy reading and processing.
+""",
+)
+async def get_ipo_document_text(
+    ipo_id: int = Path(..., description="IPO database ID"),
+    doc_type: str = Path(..., description="Document type: drhp, rhp, or final_prospectus"),
+):
+    if doc_type not in ("drhp", "rhp", "final_prospectus"):
+        raise HTTPException(status_code=400, detail=f"Invalid doc_type: {doc_type}. Use drhp, rhp, or final_prospectus.")
+    
+    text = db_service.get_document_text(ipo_id, doc_type)
+    if not text:
+        # Check if the IPO exists at all
+        ipo = db_service.get_ipo_by_id(ipo_id)
+        if not ipo:
+            raise HTTPException(status_code=404, detail="IPO not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"No extracted text for {doc_type} document. "
+                   f"Run POST /api/ipos/{ipo_id}/resolve first."
+        )
+    
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(text)
 
 
 # ─── Status Changes ──────────────────────────────────────────
