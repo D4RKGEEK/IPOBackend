@@ -6,6 +6,11 @@ Architecture:
 
 The API always returns consistent data. Live-scraping is opt-in via ?live=true.
 """
+import os
+# Fix SSL cert path for httpx on macOS
+os.environ.setdefault("SSL_CERT_FILE", "/opt/homebrew/etc/openssl@3/cert.pem")
+os.environ.setdefault("REQUESTS_CA_BUNDLE", "/opt/homebrew/etc/openssl@3/cert.pem")
+
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -296,39 +301,56 @@ async def resolve_ipo_documents(
     results = {}
     errors = []
     
-    # Ensure we have ipo_documents records for existing URLs
-    for doc_type in ("drhp", "rhp", "final_prospectus"):
-        url = docs.get(doc_type)
-        if url:
-            db_service.upsert_document(ipo_id, doc_type, url)
-    
-    async with httpx.AsyncClient(follow_redirects=True, timeout=180) as client:
+    try:
+        # Ensure we have ipo_documents records for existing URLs
         for doc_type in ("drhp", "rhp", "final_prospectus"):
             url = docs.get(doc_type)
-            if not url:
-                results[doc_type] = {"status": "skipped", "reason": "no URL"}
-                continue
-            
-            existing = db_service.get_document_text(ipo_id, doc_type)
-            if existing:
-                db_service.update_document_phase_by_ipo(ipo_id, doc_type, "downloaded")
-                results[doc_type] = {"status": "already_done", "chars": len(existing)}
-                continue
-            
-            try:
-                result = await extract_document(url, client)
-                text = result["text"] if result else None
-                if text:
-                    db_service.save_document_text(ipo_id, doc_type, text, url)
-                    db_service.mark_document_processed(ipo_id, doc_type)
+            if url:
+                db_service.upsert_document(ipo_id, doc_type, url)
+        
+        async with httpx.AsyncClient(follow_redirects=True, timeout=180) as client:
+            for doc_type in ("drhp", "rhp", "final_prospectus"):
+                url = docs.get(doc_type)
+                if not url:
+                    results[doc_type] = {"status": "skipped", "reason": "no URL"}
+                    continue
+                
+                existing = db_service.get_document_text(ipo_id, doc_type)
+                if existing:
                     db_service.update_document_phase_by_ipo(ipo_id, doc_type, "downloaded")
-                    results[doc_type] = {"status": "ok", "chars": len(text)}
-                else:
-                    errors.append({"doc_type": doc_type, "error": "no text extracted"})
-                    results[doc_type] = {"status": "failed", "reason": "no text extracted"}
-            except Exception as e:
-                errors.append({"doc_type": doc_type, "error": str(e)})
-                results[doc_type] = {"status": "error", "reason": str(e)[:100]}
+                    results[doc_type] = {"status": "already_done", "chars": len(existing)}
+                    continue
+
+                # Quick connectivity check (skip for NSE servers — too slow)
+                if "nsearchives" not in url and "nseindia" not in url:
+                    try:
+                        head_check = await client.head(url, timeout=5)
+                        if head_check.status_code >= 400:
+                            results[doc_type] = {"status": "skipped", "reason": f"HTTP {head_check.status_code}"}
+                            errors.append({"doc_type": doc_type, "error": f"HTTP {head_check.status_code}"})
+                            continue
+                    except Exception:
+                        results[doc_type] = {"status": "skipped", "reason": "server unreachable"}
+                        errors.append({"doc_type": doc_type, "error": "connection timeout or DNS error"})
+                        continue
+                
+                try:
+                    result = await extract_document(url, client)
+                    text = result["text"] if result else None
+                    if text:
+                        db_service.save_document_text(ipo_id, doc_type, text, url)
+                        db_service.mark_document_processed(ipo_id, doc_type)
+                        db_service.update_document_phase_by_ipo(ipo_id, doc_type, "downloaded")
+                        results[doc_type] = {"status": "ok", "chars": len(text)}
+                    else:
+                        errors.append({"doc_type": doc_type, "error": "no text extracted"})
+                        results[doc_type] = {"status": "failed", "reason": "no text extracted"}
+                except Exception as e:
+                    errors.append({"doc_type": doc_type, "error": str(e)})
+                    results[doc_type] = {"status": "error", "reason": str(e)[:100]}
+    except Exception as e:
+        import traceback
+        return {"ipo_id": ipo_id, "company_name": ipo.company_name, "status": "error", "error": str(e)[:200]}
     
     return {"ipo_id": ipo_id, "company_name": d["company_name"], "results": results, "errors": errors}
 

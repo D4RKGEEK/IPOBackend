@@ -4,6 +4,8 @@ Shares the same DB as the Phase 1 API.
 Run: uvicorn dashboard.main:app --port 8002
 """
 import sys, os
+os.environ.setdefault("SSL_CERT_FILE", "/opt/homebrew/etc/openssl@3/cert.pem")
+os.environ.setdefault("REQUESTS_CA_BUNDLE", "/opt/homebrew/etc/openssl@3/cert.pem")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import asyncio
