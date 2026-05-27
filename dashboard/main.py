@@ -14,7 +14,6 @@ from typing import Optional
 from fastapi import FastAPI, Form, Query, Path, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db_service import DatabaseService
@@ -26,7 +25,14 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="IPO Dashboard", version="1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+from jinja2 import Environment, FileSystemLoader
+jinja_env = Environment(loader=FileSystemLoader(template_dir), auto_reload=False)
+
+def render(name: str, context: dict) -> HTMLResponse:
+    template = jinja_env.get_template(name)
+    content = template.render(context)
+    return HTMLResponse(content)
 db = DatabaseService()
 scraper = ScraperService(db=db)
 
@@ -40,7 +46,7 @@ def get_stats():
 async def index(request: Request):
     stats = get_stats()
     changes = db.get_recent_status_changes(limit=20)
-    return templates.TemplateResponse("index.html", {
+    return render("index.html", {
         "request": request, "stats": stats, "recent_changes": changes,
     })
 
@@ -64,7 +70,7 @@ async def ipo_list(
     per_page = 25
     total_pages = max(1, (total + per_page - 1) // per_page)
     
-    return templates.TemplateResponse("ipos.html", {
+    return render("ipos.html", {
         "request": request, "stats": get_stats(),
         "ipos": ipos_list, "total": total,
         "page": page, "total_pages": total_pages,
@@ -74,7 +80,7 @@ async def ipo_list(
 
 @app.get("/dashboard/ipos/add", response_class=HTMLResponse)
 async def ipo_add_form(request: Request):
-    return templates.TemplateResponse("ipo_form.html", {
+    return render("ipo_form.html", {
         "request": request, "stats": get_stats(), "ipo": None,
     })
 
@@ -137,7 +143,7 @@ async def ipo_detail(request: Request, ipo_id: int = Path(...)):
     d["cin"] = getattr(ipo, "cin_field", "")  # Handle CIN
     d["website"] = getattr(ipo, "cin_field", "")  # Will be in to_dict
     
-    return templates.TemplateResponse("ipo_detail.html", {
+    return render("ipo_detail.html", {
         "request": request, "stats": stats,
         "ipo": d, "status_history": history,
     })
@@ -148,7 +154,7 @@ async def ipo_edit_form(request: Request, ipo_id: int = Path(...)):
     ipo = db.get_ipo_by_id(ipo_id)
     if not ipo:
         return HTMLResponse("IPO not found", status_code=404)
-    return templates.TemplateResponse("ipo_form.html", {
+    return render("ipo_form.html", {
         "request": request, "stats": get_stats(),
         "ipo": ipo.to_dict(),
     })
@@ -263,7 +269,7 @@ async def phase_publish(request: Request, ipo_id: int = Path(...)):
 @app.get("/dashboard/scrape", response_class=HTMLResponse)
 async def scrape_page(request: Request):
     logs = db.get_recent_logs(limit=20)
-    return templates.TemplateResponse("scrape.html", {
+    return render("scrape.html", {
         "request": request, "stats": get_stats(),
         "recent_logs": logs, "scrape_result": None,
     })
@@ -277,7 +283,7 @@ async def scrape_run(request: Request, resolve_docs: bool = Query(False)):
         resolve_docs=resolve_docs,
     )
     logs = db.get_recent_logs(limit=20)
-    return templates.TemplateResponse("scrape.html", {
+    return render("scrape.html", {
         "request": request, "stats": get_stats(),
         "recent_logs": logs, "scrape_result": report,
     })
@@ -286,6 +292,6 @@ async def scrape_run(request: Request, resolve_docs: bool = Query(False)):
 @app.get("/dashboard/logs", response_class=HTMLResponse)
 async def logs_page(request: Request):
     logs = db.get_recent_logs(limit=100)
-    return templates.TemplateResponse("logs.html", {
+    return render("logs.html", {
         "request": request, "stats": get_stats(), "logs": logs,
     })
