@@ -36,38 +36,40 @@ def extract(text: str) -> dict:
     if fv:
         result["face_value"] = float(fv.group(1))
     
-    # Fresh Issue shares: Only match if number appears close to "FRESH ISSUE" (within 500 chars)
-    # and "Not Applicable" doesn't appear in between (which means it's an OFS-only issue)
+    # Fresh Issue shares
     for fresh_pat in [
-        r'FRESH\s+ISSUE[\s\S]{0,80}(?:Up\s*|up\s*)?to\s*(\d[\d,]*)\s*Equity\s*Shares',
-        r'Fresh\s+Issue[\s\S]{0,80}(?:Up\s*|up\s*)?to\s*(\d[\d,]*)\s*Equity\s*Shares',
+        r'FRESH\s+ISSUE[\s\S]{0,80}(?:[Uu]p\s*)?[Tt]o\s*(\d[\d,]*)[\s\S]{0,200}?Equity\s*Shares',
+        r'Fresh\s+Issue[\s\S]{0,80}(?:[Uu]p\s*)?[Tt]o\s*(\d[\d,]*)[\s\S]{0,200}?Equity\s*Shares',
     ]:
         fresh_section = re.search(fresh_pat, text[:10000], re.S)
         if fresh_section:
-            # Check that "Not Applicable" isn't between FRESH ISSUE and the number
             context = text[fresh_section.start():fresh_section.start() + 200]
             if not re.search(r'Not\s+Applicable|Nil|None|N\.A\.', context, re.I):
                 result["fresh_issue_shares"] = int(fresh_section.group(1).replace(',', ''))
                 break
     
-    # OFS shares: Only match if number appears close to "OFFER FOR SALE" (within 500 chars)
-    # and NOT preceded by "Not Applicable" in the same table cell
+    # OFS shares
     for ofs_pat in [
-        r'OFFER\s+FOR\s+SALE[\s\S]{0,300}(?:Up\s*|up\s*)?to\s*(\d[\d,]*)\s*Equity\s*Shares',
-        r'Offer\s+for\s+Sale[\s\S]{0,200}(?:Up\s*|up\s*)?to\s*(\d[\d,]*)\s*Equity\s*Shares',
+        r'OFFER\s+FOR\s+SALE[\s\S]{0,300}(?:[Uu]p\s*)?[Tt]o\s*(\d[\d,]*)[\s\S]{0,200}?Equity\s*Shares',
+        r'Offer\s+for\s+Sale[\s\S]{0,200}(?:[Uu]p\s*)?[Tt]o\s*(\d[\d,]*)[\s\S]{0,200}?Equity\s*Shares',
     ]:
         ofs_section = re.search(ofs_pat, text[:15000], re.S)
         if ofs_section:
             result["offer_for_sale_shares"] = int(ofs_section.group(1).replace(',', ''))
             break
     
-    # Total issue: "Up\nto\nX,XXX,XXX\nEquity\nShares" after "TOTAL OFFER SIZE"
+    # Total issue
     total_section = re.search(
-        r'TOTAL\s+(?:OFFER\s+SIZE|ISSUE\s+SIZE).*?(?:Up\s*|up\s*)?to\s*(\d[\d,]*)\s*Equity\s*Shares',
+        r'TOTAL\s+(?:OFFER(?:\s+SIZE)?|ISSUE(?:\s+SIZE)?)[\s\S]{0,300}(?:[Uu]p\s*)?[Tt]o\s*(\d[\d,]*)[\s\S]{0,200}?Equity\s*Shares',
         text[:15000], re.I | re.S
     )
     if total_section:
-        result["total_issue_shares"] = int(total_section.group(1).replace(',', ''))
+        # Only count if different from fresh or OFS
+        val = int(total_section.group(1).replace(',', ''))
+        if val != result["fresh_issue_shares"] or result["fresh_issue_shares"] == 0:
+            result["total_issue_shares"] = val
+    
+    # Fresh Issue amount (look for aggregating up to ₹ X,XXX million)
     
     # Fresh Issue amount (look for aggregating up to ₹ X,XXX million)
     fresh_amt = re.search(
