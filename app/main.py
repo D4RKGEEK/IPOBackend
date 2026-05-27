@@ -133,24 +133,23 @@ async def get_ipos(
         "all", description="Filter by platform: mainboard, sme, all"
     ),
     search: str = Query("", description="Search by company name (case-insensitive)"),
+    year: Optional[int] = Query(None, description="Filter by filing year (e.g. 2026)"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(25, ge=1, le=100, description="Records per page"),
-    live: bool = Query(
-        False, description="If true, do a live scrape instead of reading from DB (slower)"
-    ),
+    live: bool = Query(False, description="[Deprecated] Use DB-backed endpoints instead"),
     raw: bool = Query(
         False, description="Include full source-level data in response"
     ),
 ):
     if live:
-        # Live scrape mode — slower, direct from sources
-        return await _live_scrape(status=status, platform=platform, search=search, raw=raw)
+        raise HTTPException(status_code=400, detail="live=true is deprecated. Use default DB-backed endpoint.")
     
     # DB-backed — fast, always works
     ipos, total = db_service.get_all_ipos(
         status=status,
         platform=platform,
         search=search,
+        year=year,
         page=page,
         per_page=per_page,
     )

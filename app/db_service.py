@@ -15,6 +15,7 @@ from .db_models import (
     IPOStatusHistory,
     ScraperLog,
     IPOParsedData,
+    IPODocument,
     init_db,
     get_session,
 )
@@ -49,6 +50,7 @@ class DatabaseService:
         status: Optional[str] = None,
         platform: Optional[str] = None,
         search: Optional[str] = None,
+        year: Optional[int] = None,
         page: int = 1,
         per_page: int = 25,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -63,6 +65,10 @@ class DatabaseService:
             if search:
                 query = query.filter(
                     IPOMaster.company_name.ilike(f"%{search}%")
+                )
+            if year:
+                query = query.filter(
+                    IPOMaster.drhp_filed_date.like(f"{year}%")
                 )
 
             total = query.count()
@@ -569,3 +575,97 @@ class DatabaseService:
                 }
                 for log in logs
             ]
+
+    # ─── Document CRUD ─────────────────────────────────────
+
+    def upsert_document(
+        self,
+        ipo_id: int,
+        doc_type: str,
+        url: str,
+        doc_version: int = 1,
+    ) -> IPODocument:
+        """Create or update a document record for an IPO."""
+        with self._session() as session:
+            existing = (
+                session.query(IPODocument)
+                .filter(
+                    IPODocument.ipo_master_id == ipo_id,
+                    IPODocument.doc_type == doc_type,
+                    IPODocument.doc_version == doc_version,
+                )
+                .first()
+            )
+            if existing:
+                if existing.url != url:
+                    existing.url = url
+                    existing.phase = "discovered"
+                existing.last_updated = datetime.now(timezone.utc)
+                doc = existing
+            else:
+                doc = IPODocument(
+                    ipo_master_id=ipo_id,
+                    doc_type=doc_type,
+                    doc_version=doc_version,
+                    url=url,
+                    phase="discovered",
+                )
+                session.add(doc)
+            session.commit()
+            return doc
+
+    def get_documents(self, ipo_id: int) -> list[dict[str, Any]]:
+        """Get all documents for an IPO."""
+        with self._session() as session:
+            docs = (
+                session.query(IPODocument)
+                .filter(IPODocument.ipo_master_id == ipo_id)
+                .order_by(IPODocument.doc_type, IPODocument.doc_version)
+                .all()
+            )
+            return [
+                {
+                    "id": d.id,
+                    "doc_type": d.doc_type,
+                    "doc_version": d.doc_version,
+                    "url": d.url,
+                    "phase": d.phase,
+                    "downloaded_at": d.downloaded_at.isoformat() if d.downloaded_at else None,
+                    "parsed_at": d.parsed_at.isoformat() if d.parsed_at else None,
+                    "published_at": d.published_at.isoformat() if d.published_at else None,
+                    "confidence": d.confidence,
+                }
+                for d in docs
+            ]
+
+    def update_document_phase(
+        self,
+        doc_id: int,
+        phase: str,
+    ) -> bool:
+        """Update document phase and set the corresponding timestamp."""
+        with self._session() as session:
+            doc = session.query(IPODocument).filter(IPODocument.id == doc_id).first()
+            if not doc:
+                return False
+            doc.phase = phase
+            now = datetime.now(timezone.utc)
+            if phase == "downloaded":
+                doc.downloaded_at = now
+            elif phase == "parsed":
+                doc.parsed_at = now
+            elif phase == "published":
+                doc.published_at = now
+            doc.last_updated = now
+            session.commit()
+            return True
+
+    def delete_document(self, doc_id: int) -> bool:
+        """Delete a document record."""
+        with self._session() as session:
+            doc = session.query(IPODocument).filter(IPODocument.id == doc_id).first()
+            if not doc:
+                return False
+            session.delete(doc)
+            session.commit()
+            return True
