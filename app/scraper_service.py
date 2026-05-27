@@ -30,7 +30,7 @@ from app.clients import (
 )
 from app.schemas import IPORecord
 from app.status import compute_status, compute_dates, compute_documents
-from app.utils import normalize_company_name
+from app.utils import normalize_company_name, parse_source_date, format_date
 from app.db_service import DatabaseService
 from app.pdf_utils import download_and_extract_text
 
@@ -67,11 +67,11 @@ def _record_to_ipo_data(record: IPORecord, sources_queried: list[str]) -> dict[s
         "normalized_name": normalize_company_name(record.company_name),
         "company_name": record.company_name,
         "status": status,
-        "drhp_filed_date": dates.get("drhp_filed"),
-        "rhp_filed_date": dates.get("rhp_filed"),
-        "fp_filed_date": dates.get("fp_filed"),
-        "open_date": dates.get("open"),
-        "close_date": dates.get("close"),
+        "drhp_filed_date": format_date(dates.get("drhp_filed")),
+        "rhp_filed_date": format_date(dates.get("rhp_filed")),
+        "fp_filed_date": format_date(dates.get("fp_filed")),
+        "open_date": format_date(dates.get("open")),
+        "close_date": format_date(dates.get("close")),
         "price_band": bse.price_band if bse else None,
         "platform": (
             bse.platform if bse else (

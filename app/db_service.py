@@ -66,7 +66,12 @@ class DatabaseService:
                 )
 
             total = query.count()
-            query = query.order_by(IPOMaster.id.desc())  # newest IPOs first
+            # Sort by most recently filed first. Fallback to discovery date.
+            query = query.order_by(
+                IPOMaster.drhp_filed_date.desc().nullslast(),
+                IPOMaster.rhp_filed_date.desc().nullslast(),
+                IPOMaster.id.desc(),
+            )
             query = query.offset((page - 1) * per_page).limit(per_page)
 
             return [row.to_dict() for row in query.all()], total
