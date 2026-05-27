@@ -1,5 +1,5 @@
-from app.clients import BSEClient, SEBIClient
-from app.utils import normalize_company_name
+from app.clients import BSEClient, NSEClient, SEBIClient
+from app.utils import clean_url, is_zip_url, normalize_company_name
 
 
 def test_parse_sebi_listing_extracts_detail_and_abridged_pdf():
@@ -64,3 +64,57 @@ def test_parse_bse_ipos_maps_status():
 
 def test_normalize_company_name():
     assert normalize_company_name("Rentomojo Limited - DRHP") == "RENTOMOJO LTD"
+
+
+def test_nse_parse_response():
+    """Test NSE offer-docs response parsing with clean URL handling."""
+    raw_data = [
+        {
+            "company": "Rentomojo Limited",
+            "symbol": "-",
+            "drhp": "Draft Prospectus/Draft Red Herring Prospectus",
+            "drhpDate": "26-May-2026",
+            "drhpAttach": "https://nsearchives.nseindia.com/corporate/Rentomojo.zip",
+            "drhpAttachFileSize": "9.07 MB",
+            "drhpStatus": "Under Process",
+            "fpAttach": "https://nsearchives.nseindia.com/corporate/FP_Rentomojo.pdf",
+        },
+        {
+            "company": "Arohan Financial Services Limited",
+            "drhpAttach": "https://nsearchives.nseindia.com/corporate/d_Arohan.zip\r",
+            "drhpAttachFileSize": None,
+        },
+    ]
+    parsed = NSEClient(client=None)._parse_response(raw_data, index="equities")
+
+    # First record: Rentomojo
+    assert parsed[0].company_name == "Rentomojo Limited"
+    assert parsed[0].drhp_attach is not None
+    assert parsed[0].drhp_attach.url == "https://nsearchives.nseindia.com/corporate/Rentomojo.zip"
+    assert parsed[0].drhp_attach.is_zip is True
+    assert parsed[0].drhp_attach.file_size == "9.07 MB"
+    assert parsed[0].drhp_status == "Under Process"
+    assert parsed[0].fp_attach is not None
+    assert parsed[0].fp_attach.is_zip is False  # .pdf not .zip
+
+    # Second record: Arohan with trailing \r — should be cleaned
+    assert parsed[1].company_name == "Arohan Financial Services Limited"
+    assert parsed[1].drhp_attach is not None
+    assert parsed[1].drhp_attach.url == "https://nsearchives.nseindia.com/corporate/d_Arohan.zip"
+    assert parsed[1].drhp_attach.is_zip is True
+
+
+def test_clean_url_strips_trailing_cr():
+    assert clean_url("https://example.com/file.zip\r") == "https://example.com/file.zip"
+    assert clean_url("https://example.com/file.pdf ") == "https://example.com/file.pdf"
+    assert clean_url("  https://example.com/file  ") == "https://example.com/file"
+    assert clean_url(None) is None
+    assert clean_url("") is None
+
+
+def test_is_zip_url():
+    assert is_zip_url("https://example.com/file.zip") is True
+    assert is_zip_url("https://example.com/file.ZIP") is True
+    assert is_zip_url("https://example.com/file.pdf") is False
+    assert is_zip_url(None) is False
+    assert is_zip_url("") is False
