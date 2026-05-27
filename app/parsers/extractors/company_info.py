@@ -1,14 +1,11 @@
 """
-Extractor: Company info — name, CIN, address, website, incorporation year.
+Extractor: Company info — retrained on actual PyMuPDF text format.
 """
 import re
-from ..utils.patterns import (
-    RE_CIN, RE_COMPANY_NAME_HEADER, RE_PROMOTER_CAPS,
-)
 
 
 def extract(text: str) -> dict:
-    """Extract company information from DRHP/RHP text."""
+    """Extract company information from DRHP/RHP text (PyMuPDF format)."""
     result = {
         "company_name": "",
         "cin": "",
@@ -19,68 +16,74 @@ def extract(text: str) -> dict:
         "year_of_incorporation": "",
     }
     
-    # CIN
-    m = RE_CIN.search(text)
+    header = text[:5000]
+    
+    # CIN from "CORPORATE IDENTITY NUMBER: XXXX"
+    m = re.search(r'CORPORATE\s+IDENTITY\s+(?:NUMBER|NO)[:\s]*([A-Z0-9]+)', header, re.I)
     if m:
-        result["cin"] = m.group(0)
+        result["cin"] = m.group(1)
     
-    # Company name from header (first 2000 chars)
-    header = text[:2000]
-    m = RE_COMPANY_NAME_HEADER.search(header)
-    if m:
-        name = m.group(1).strip()
-        # Clean up
-        name = re.sub(r'\s+', ' ', name)
-        result["company_name"] = name
+    # Company name: first significant ALL CAPS line between DRHP header and "CORPORATE IDENTITY"
+    # Pattern: skip the DRHP header lines, find the company name in all caps
+    lines = header.split('\n')
+    found_header_end = False
+    for line in lines:
+        clean = line.strip()
+        if not clean:
+            continue
+        # Skip DRHP/offer header lines
+        if any(x in clean.upper() for x in ['DRHP', 'RHP', 'DRAFT RED', 'RED HERRING', 
+                                              'PROSPECTUS', 'DATED', 'PLEASE READ',
+                                              'BOOK BUILT', 'FIXED PRICE', 'QR CODE',
+                                              'SCAN THIS', '(FORMERLY']):
+            if any(x in clean.upper() for x in ['DRAFT RED', 'RED HERRING', 'PROSPECTUS',
+                                                  'DATED', 'BOOK BUILT']):
+                found_header_end = True
+            continue
+        # First substantial ALL CAPS line = company name
+        if found_header_end and len(clean) > 5 and clean.isupper() and clean.isascii():
+            result["company_name"] = clean
+            break
     
-    # CIN often appears near company name
-    cin_match = re.search(
-        r'(?:CIN|Corporate\s*Identity\s*(?:Number|No))\s*[:\-]?(?:\s*(?:is|no))?\s*([A-Z0-9]+)',
-        text[:3000], re.I
-    )
-    if cin_match:
-        result["cin"] = cin_match.group(1)
-    
-    # Website
-    web = re.search(r'(?:website|web\s*site|site)\s*(?::|–|-)?\s*(https?://[^\s\n]+)', text[:3000], re.I)
-    if not web:
-        web = re.search(r'(?:website|web\s*site|site)\s*(?::|–|-)?\s*(www\.[^\s\n]+)', text[:3000], re.I)
+    # Website: look for www. or http:// in header area
+    web = re.search(r'(?:www\.[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', header)
     if web:
-        result["website"] = web.group(1).strip().rstrip('.')
+        result["website"] = web.group(0).rstrip(';.')
     
-    # Email (from first 3000 chars)
-    email = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text[:3000])
+    # Email
+    email = re.search(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', header)
     if email:
-        result["email"] = email.group(0)
+        result["email"] = email.group(1).rstrip('.')
     
-    # Telephone (from first 3000 chars)
-    phone = re.search(r'(?:tel|phone|telephone)\s*(?::|no|\.)?\s*[+\d\s\-()]{7,20}', text[:3000], re.I)
+    # Telephone
+    phone = re.search(r'(?:Tel|Phone|Telephone)[.\s:]*(?:[+\d][-\d\s()]{7,20})', header, re.I)
     if phone:
-        result["telephone"] = phone.group(0).strip()
+        num = re.search(r'[+\d][-\d\s()]{7,20}', phone.group(0))
+        if num:
+            result["telephone"] = num.group(0).strip()
+    
+    # Address: between "REGISTERED OFFICE" and "CORPORATE OFFICE" or "CONTACT PERSON"
+    addr_match = re.search(
+        r'REGISTERED\s+(?:AND\s+)?(?:CORPORATE\s+)?OFFICE\s*(.*?)(?:CONTACT\s+PERSON|CORPORATE\s+OFFICE|OUR\s+PROMOTERS|Tel[.:]|\n\n\n)',
+        header, re.I | re.S
+    )
+    if addr_match:
+        addr = addr_match.group(1).strip()
+        addr = re.sub(r'\s+', ' ', addr)
+        # Clean up fragmented text artifacts
+        addr = re.sub(r'\s*,\s*', ', ', addr)
+        addr = re.sub(r'\s*-\s*', ' - ', addr)
+        if len(addr) > 15:
+            result["registered_address"] = addr
     
     # Year of incorporation
     inc = re.search(
-        r'(?:incorporated|constituted|established)\s+(?:as|on|under)?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{4}|\d{4})',
-        text[:3000], re.I
+        r'(?:incorporated|constituted|registered)\s+(?:as|on|originally)?\s*(?:\d{1,2}[-/]\d{1,2}[-/])?(\d{4})',
+        header[:3000], re.I
     )
     if inc:
         yr = inc.group(1)
-        if re.match(r'^\d{4}$', yr):
+        if yr.isdigit() and len(yr) == 4 and int(yr) > 1950 and int(yr) < 2030:
             result["year_of_incorporation"] = yr
-        elif '/' in yr or '-' in yr:
-            parts = re.split(r'[-/]', yr)
-            if len(parts) == 3:
-                result["year_of_incorporation"] = parts[2] if len(parts[2]) == 4 else ('20' + parts[2])
-    
-    # Registered address block (between "Registered Office" and next section)
-    addr_block = re.search(
-        r'(?:registered\s+office|regd\.?\s*office)\s*(?::|–|-)?\s*(.*?)(?:\n\s*\n|(?:corporate|Tel|Email|Website|Contact))',
-        text[:4000], re.I | re.S
-    )
-    if addr_block:
-        addr = addr_block.group(1).strip()
-        addr = re.sub(r'\s+', ' ', addr)
-        if len(addr) > 10:  # Sanity check
-            result["registered_address"] = addr
     
     return result

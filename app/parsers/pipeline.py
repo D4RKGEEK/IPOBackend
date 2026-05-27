@@ -170,14 +170,24 @@ def _merge_parsed(base: ParsedIPOResult, incoming: ParsedIPOResult) -> None:
     if incoming.financials.has_data and len(incoming.financials.years) > len(base.financials.years):
         base.financials = incoming.financials
     
-    # Merge issue (prefer incoming where values > 0)
+    # Merge issue — prefer incoming config values (including booleans)
+    if incoming.issue.is_book_built:
+        base.issue.is_book_built = True
+    if incoming.issue.is_fixed_price:
+        base.issue.is_fixed_price = True
     if incoming.issue.fresh_issue_shares > base.issue.fresh_issue_shares:
         base.issue.fresh_issue_shares = incoming.issue.fresh_issue_shares
+    if incoming.issue.offer_for_sale_shares > base.issue.offer_for_sale_shares:
+        base.issue.offer_for_sale_shares = incoming.issue.offer_for_sale_shares
+    if incoming.issue.total_issue_shares > base.issue.total_issue_shares:
+        base.issue.total_issue_shares = incoming.issue.total_issue_shares
     if incoming.issue.total_issue_amount_cr > base.issue.total_issue_amount_cr:
         base.issue.total_issue_amount_cr = incoming.issue.total_issue_amount_cr
+    if incoming.issue.fresh_issue_amount_cr > base.issue.fresh_issue_amount_cr:
+        base.issue.fresh_issue_amount_cr = incoming.issue.fresh_issue_amount_cr
     if incoming.issue.face_value > 0:
         base.issue.face_value = incoming.issue.face_value
-    if incoming.price.price_band_lower > 0:
+    if incoming.price.has_price_band or incoming.price.price_band_lower > 0 or incoming.price.price_band_upper > 0:
         base.price = incoming.price
     if incoming.intermediaries.brlms:
         base.intermediaries.brlms = incoming.intermediaries.brlms

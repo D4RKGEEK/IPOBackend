@@ -1,20 +1,15 @@
 """
-Extractor: Promoters, intermediaries, and key stakeholders.
+Extractor: Promoters and intermediaries — retrained on actual text format.
 """
 import re
-from ..utils.patterns import (
-    RE_PROMOTER_CAPS, RE_BRLM, RE_REGISTRAR, RE_BANKERS,
-    RE_MARKET_MAKER, RE_REGISTRAR_WEBSITE,
-)
 
 
 def extract(text: str) -> dict:
-    """Extract promoters and intermediaries."""
+    """Extract promoters and intermediaries from PyMuPDF text."""
     result = {
         "promoters": [],
         "brlms": [],
         "registrar": "",
-        "registrar_website": "",
         "bankers": [],
         "market_maker": "",
         "legal_advisors": [],
@@ -22,90 +17,69 @@ def extract(text: str) -> dict:
     }
     
     # ─── Promoters ───────────────────────────────────────
-    # Look for PROMOTER section in all caps
-    m = RE_PROMOTER_CAPS.search(text[:8000])
-    if m:
-        names = m.group(1).strip()
-        # Split by common delimiters
-        parts = re.split(r'\s+(?:AND|&)\s+|[;,]\s*', names)
+    # Format: "OUR PROMOTERS: NAME1 AND NAME2 AND NAME3"
+    prom = re.search(
+        r'(?:OUR\s+)?PROMOTERS?\s*:\s*([A-Z][A-Z\s.,&()/-]+?)(?:\n(?!\s*[A-Z]+\s)|\s*(?:DETAILS|THE\s+ISSUE|REGISTERED|CORPORATE|RISKS|Page|\d))',
+        text[:10000]
+    )
+    if prom:
+        names = prom.group(1).strip()
+        # Split by "AND" (with word boundaries) and also try commas
+        parts = re.split(r'\s+(?:AND|&)\s+', names)
         result["promoters"] = [p.strip().title() for p in parts if len(p.strip()) > 3][:10]
     
-    # Also try to find in the text body
-    if not result["promoters"]:
-        # Look for "Our Promoters :" pattern
-        m = re.search(
-            r'(?:our\s+)?promoters?\s*(?::|are|is)\s*([A-Z][A-Z\s.,&()/-]+?)(?:\.\s+[A-Z]|\n\n)',
-            text[:5000], re.I
-        )
-        if m:
-            names = m.group(1).strip()
-            parts = re.split(r'\s+(?:AND|&)\s+|[;,]\s*', names)
-            result["promoters"] = [p.strip().title() for p in parts if len(p.strip()) > 3][:10]
-    
     # ─── BRLMs ────────────────────────────────────────────
-    m = RE_BRLM.search(text[:15000])
-    if m:
-        names = m.group(1).strip()
-        parts = re.split(r'\s*[,;]\s*|\s+AND\s+|\s*&', names)
-        result["brlms"] = [p.strip().title() for p in parts if len(p.strip()) > 5][:5]
+    # Found deeper in text - in "Other Regulatory" or "Basis for Offer Price" sections
+    # Format: "Book Running Lead Managers: Name1, Name2"
+    brlm = re.search(
+        r'(?:Book\s+Running\s+Lead\s+(?:Manager|Managers)|BRLMs?)[\s:]*(?::)?\s*(.+?)(?:\n\s*\n|\s*(?:Registrar|Banker|Legal|Auditor|Compliance|Selling\s+Shareholder))',
+        text[:100000], re.I | re.S
+    )
+    if brlm:
+        names = brlm.group(1).strip()
+        # Clean up fragmented whitespace from PyMuPDF
+        names = re.sub(r'\s+', ' ', names)
+        parts = re.split(r'\s*[,;]\s*|\s+AND\s+|\s*&\s*', names)
+        result["brlms"] = [p.strip() for p in parts if len(p.strip()) > 5][:5]
     
-    # Also try simple keyword search
+    # Try simpler pattern: look for text containing "BRLM" followed by capitalized names
     if not result["brlms"]:
-        m = re.search(
-            r'(?:book\s+running\s+lead\s+manager|brlm)\s*(?::|to\s+the\s+issue)?\s*:?\s*([A-Z][A-Z\s.]+(?:LIMITED|LTD|PVT|PRIVATE)[A-Z\s.]*)',
-            text[:10000], re.I
+        brlm2 = re.search(
+            r'BRLM[:\s]+([A-Z][A-Z\s.]+(?:LIMITED|LTD|PVT|PRIVATE|LLP)[A-Z\s.]*)',
+            text[:50000]
         )
-        if m:
-            names = m.group(1).strip()
-            result["brlms"] = [names]
+        if brlm2:
+            result["brlms"] = [brlm2.group(1).strip().title()]
     
     # ─── Registrar ────────────────────────────────────────
-    m = RE_REGISTRAR.search(text[:15000])
-    if m:
-        result["registrar"] = m.group(1).strip().title()
-    
-    if not result["registrar"]:
-        m = re.search(
-            r'(?:registrar|rtai)\s*(?:to\s+the\s+)?(?:issue|offer)?\s*(?::|is|name)?\s*:?\s*([A-Z][A-Z\s.]+(?:LIMITED|LTD|PVT|PRIVATE)[A-Z\s.]*)',
-            text[:10000], re.I
-        )
-        if m:
-            result["registrar"] = m.group(1).strip().title()
-    
-    # Registrar website
-    m = RE_REGISTRAR_WEBSITE.search(text[:20000])
-    if m:
-        result["registrar_website"] = m.group(1).strip()
+    reg = re.search(
+        r'(?:Registrar\s+(?:to\s+the\s+)?(?:Issue|Offer)?)[\s:]*(?::)?\s*(.+?)(?:\n\s*\n|\s*(?:Banker|BRLM|Legal|Contact|Website))',
+        text[:100000], re.I | re.S
+    )
+    if reg:
+        name = reg.group(1).strip()
+        name = re.sub(r'\s+', ' ', name)
+        result["registrar"] = name.title()
     
     # ─── Bankers ──────────────────────────────────────────
-    m = RE_BANKERS.search(text[:15000])
-    if m:
-        names = m.group(1).strip()
-        parts = re.split(r'\s*[,;]\s*|\s+AND\s+|\s*&', names)
+    bank = re.search(
+        r'(?:Banker(?:s)?\s+to\s+the\s+(?:Issue|Company)|Bankers?)[\s:]*(?::)?\s*(.+?)(?:\n\s*\n|\s*(?:Registrar|BRLM|Legal|Auditor))',
+        text[:100000], re.I | re.S
+    )
+    if bank:
+        names = bank.group(1).strip()
+        names = re.sub(r'\s+', ' ', names)
+        parts = re.split(r'\s*[,;]\s*|\s+AND\s+|\s*&\s*', names)
         result["bankers"] = [p.strip().title() for p in parts if len(p.strip()) > 5][:5]
     
-    # ─── Market Maker ─────────────────────────────────────
-    m = RE_MARKET_MAKER.search(text[:10000])
-    if m:
-        result["market_maker"] = m.group(1).strip().title()
-    
     # ─── Auditors ─────────────────────────────────────────
-    m = re.search(
-        r'(?:statutory\s+)?auditors?\s*(?:of\s+the\s+company)?\s*(?::|is|are|,)?\s*:?\s*([A-Z][A-Z\s.]+(?:&\s*[A-Z][A-Z\s.]+)*(?:LIMITED|LTD|PVT|PRIVATE|CHARTERED|ASSOCIATES|LLP)?)',
-        text[:10000], re.I
+    aud = re.search(
+        r'(?:Statutory\s+)?Auditors?[\s:]*(?::)?\s*(.+?)(?:\n\s*\n|\s*(?:Registrar|BRLM|Banker|Legal|Compliance))',
+        text[:100000], re.I | re.S
     )
-    if m:
-        names = m.group(1).strip()
-        result["auditors"] = [names.title()]
-    
-    # ─── Legal Advisors ───────────────────────────────────
-    m = re.search(
-        r'(?:legal\s+(?:advisor|adviser|counsel))\s*(?::|to\s+the\s+issue)?\s*:?\s*([A-Z][A-Z\s.]+(?:&\s*[A-Z][A-Z\s.]+)*)',
-        text[:10000], re.I
-    )
-    if m:
-        names = m.group(1).strip()
-        parts = re.split(r'\s*[,;]\s*|\s+AND\s+|\s*&', names)
-        result["legal_advisors"] = [p.strip().title() for p in parts if len(p.strip()) > 5][:3]
+    if aud:
+        name = aud.group(1).strip()
+        name = re.sub(r'\s+', ' ', name)
+        result["auditors"] = [name.title()]
     
     return result
