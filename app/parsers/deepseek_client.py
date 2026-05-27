@@ -11,22 +11,29 @@ API_URL = "https://api.deepseek.com/v1/chat/completions"
 
 
 def _get_api_key() -> str:
-    """Get DeepSeek API key from environment or .env file."""
+    """Get DeepSeek API key from environment or .env files."""
     key = os.environ.get("DEEPSEEK_API_KEY")
     if key:
         return key
-    # Try sourcing the .env file
-    try:
-        result = subprocess.run(
-            ["bash", "-c", "source ~/.hermes/.env 2>/dev/null; echo \"$DEEPSEEK_API_KEY\""],
-            capture_output=True, text=True, timeout=5,
-        )
-        key = result.stdout.strip()
-        if key:
-            return key
-    except Exception:
-        pass
-    raise RuntimeError("DEEPSEEK_API_KEY not found. Set it in ~/.hermes/.env or export it.")
+    
+    # Check project .env
+    project_env = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    for env_path in [
+        project_env,
+        os.path.expanduser("~/.hermes/.env"),
+    ]:
+        try:
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("DEEPSEEK_API_KEY="):
+                        val = line.split("=", 1)[1].strip().strip("\"'")
+                        if val and val != "***":
+                            return val
+        except Exception:
+            continue
+    
+    raise RuntimeError("DEEPSEEK_API_KEY not found. Create .env in project root with: DEEPSEEK_API_KEY=***")
 
 
 def extract_fields(

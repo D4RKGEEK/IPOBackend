@@ -86,7 +86,12 @@ SECTION_FIELDS = {
 def has_deepseek_key() -> bool:
     import os
     try:
-        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+        # Look for .env in project root (where requirements.txt lives)
+        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Go up from app/parsers/ to project root
+        if script_dir.endswith('/app'):
+            script_dir = os.path.dirname(script_dir)
+        env_path = os.path.join(script_dir, '.env')
         with open(env_path) as f:
             for line in f:
                 line = line.strip()
@@ -101,39 +106,37 @@ def has_deepseek_key() -> bool:
 
 def extract_sections(text: str) -> dict[str, str]:
     """
-    Split document text into sections using page markers.
-    Text format: "--- Page N ---\ncontent"
-    Returns: {SECTION_NAME: text_content}
+    Split document text into sections by finding section header positions.
+    Works with raw text (no page markers needed).
     """
-    # Build regex pattern from all section headers
-    pattern = r"--- Page \d+ ---\n.*?(?=" + "|".join(
-        re.escape(h) for h in sorted(SECTION_HEADERS, key=len, reverse=True)
-    ) + r")"
+    import re
     
-    sections = {}
+    # Find all section header positions in the text
+    header_positions = []
     for header in SECTION_HEADERS:
-        # Find the section by scanning page by page
-        pages = re.split(r"--- Page \d+ ---\n", text)
-        found = False
-        section_pages = []
+        for m in re.finditer(re.escape(header), text, re.IGNORECASE):
+            # Only consider headers that appear at line start or after a newline
+            pos = m.start()
+            if pos == 0 or text[pos-1] == '\n':
+                header_positions.append((pos, header))
+    
+    if not header_positions:
+        return {}
+    
+    # Sort by position
+    header_positions.sort()
+    
+    # Build section texts
+    sections = {}
+    for i, (pos, header) in enumerate(header_positions):
+        end = header_positions[i+1][0] if i + 1 < len(header_positions) else len(text)
+        section_text = text[pos:end]
         
-        for i, page_text in enumerate(pages):
-            if not found and header in page_text:
-                found = True
-                section_pages.append(page_text)
-            elif found:
-                # Check if next section starts
-                is_next = any(
-                    h in page_text for h in SECTION_HEADERS 
-                    if h != header
-                )
-                if is_next:
-                    break
-                section_pages.append(page_text)
-        
-        if section_pages:
-            section_key = header.upper().replace(" ", "_")
-            sections[section_key] = "\n".join(section_pages)
+        # Normalize key
+        key = header.upper().replace(" ", "_")
+        # Remove duplicates (keep the first/longest occurrence)
+        if key not in sections or len(section_text) > len(sections[key]):
+            sections[key] = section_text
     
     return sections
 
@@ -165,13 +168,45 @@ def run_regex_on_text(text: str) -> dict:
     return result
 
 
-def run_deepseek_on_section(text: str, section_name: str, fields: list[str]) -> dict:
-    """Run DeepSeek on a section (if key is set)."""
+def run_deepseek_on_section(text: str, section_name: str, doc_type: str) -> dict:
+    """Run DeepSeek on a section using section-specific extractors."""
     if not has_deepseek_key():
         return {}
     try:
-        from app.parsers.deepseek_client import extract_fields as ds
-        return ds(text, section_name, "DRHP", fields)
+        from app.parsers.deepseek_client import (
+            extract_general_information,
+            extract_capital_structure,
+            extract_kpis,
+            extract_financials,
+            extract_fields,
+        )
+        
+        # Route to section-specific extractors for better prompting
+        section_upper = section_name.upper().replace(" ", "_")
+        
+        if section_upper == "GENERAL_INFORMATION":
+            return extract_general_information(text, doc_type)
+        elif section_upper == "CAPITAL_STRUCTURE":
+            return extract_capital_structure(text, doc_type)
+        elif section_upper in ("BASIS_FOR_OFFER_PRICE", "BASIS_FOR_ISSUE_PRICE"):
+            return extract_kpis(text, doc_type)
+        elif section_upper in ("RESTATED_FINANCIAL_STATEMENTS", "RESTATED_FINANCIAL_STATEMENT"):
+            return extract_financials(text, doc_type)
+        elif section_upper == "OBJECTS_OF_THE_ISSUE":
+            return extract_fields(text, section_name, doc_type, [
+                "total_project_cost", "fund_usage_breakdown",
+            ])
+        elif section_upper == "ISSUE_PROCEDURE":
+            return extract_fields(text, section_name, doc_type, [
+                "bid_open_date", "bid_close_date", "allotment_date",
+            ])
+        elif section_upper == "ISSUE_STRUCTURE":
+            return extract_fields(text, section_name, doc_type, [
+                "market_lot", "retail_min_lots", "retail_min_shares",
+                "s_hni_min_lots", "b_hni_min_lots", "application_amounts",
+            ])
+        else:
+            return {}
     except Exception as e:
         logger.warning(f"DeepSeek failed on {section_name}: {e}")
         return {}
@@ -213,7 +248,7 @@ def parse_ipo(ipo_id: int, use_deepseek: bool = True) -> dict:
             # Try DeepSeek fallback
             ds_result = {}
             if fields and use_deepseek and has_deepseek_key():
-                ds_result = run_deepseek_on_section(section_text, section_name, fields)
+                ds_result = run_deepseek_on_section(section_text, section_name, doc_type)
                 if ds_result:
                     ds_used = True
                     # DeepSeek wins over regex for the same fields
