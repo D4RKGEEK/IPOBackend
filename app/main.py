@@ -33,6 +33,7 @@ from .schemas import (
 from .status import compute_status, compute_dates, compute_documents
 from .scraper_service import ScraperService, _record_to_ipo_data, _source_count
 from .db_service import DatabaseService
+from .parsers.pipeline import parse_all_available, parse_document
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +370,131 @@ async def get_ipo_document_text(
     return PlainTextResponse(text)
 
 
+@app.post(
+    "/api/ipos/{ipo_id}/parse",
+    tags=["Parsing"],
+    summary="Extract structured data from IPO documents",
+    description="""
+Runs all parsers on the extracted document text for this IPO.
+Parses DRHP, RHP, and Final Prospectus (all available docs).
+Returns structured data: issue details, financials, promoters, intermediaries, etc.
+
+Results are saved in the database for fast retrieval.
+""",
+)
+async def parse_ipo_documents(
+    ipo_id: int = Path(..., description="IPO database ID"),
+):
+    ipo = db_service.get_ipo_by_id(ipo_id)
+    if not ipo:
+        raise HTTPException(status_code=404, detail="IPO not found")
+    
+    # Get all available document texts
+    drhp_text = db_service.get_document_text(ipo_id, "drhp")
+    rhp_text = db_service.get_document_text(ipo_id, "rhp")
+    fp_text = db_service.get_document_text(ipo_id, "final_prospectus")
+    
+    if not any([drhp_text, rhp_text, fp_text]):
+        raise HTTPException(
+            status_code=404,
+            detail="No extracted text found. Run POST /api/ipos/{id}/resolve first."
+        )
+    
+    import time
+    start = time.monotonic()
+    
+    result = parse_all_available(
+        drhp_text=drhp_text,
+        rhp_text=rhp_text,
+        fp_text=fp_text,
+        company_name=ipo.company_name,
+    )
+    
+    # Save to DB
+    processing_ms = int((time.monotonic() - start) * 1000)
+    result.parsing_time_ms = processing_ms
+    
+    db_service.save_parsed_ipo_data(
+        ipo_id=ipo_id,
+        parsed_data=result.model_dump(),
+        document_type="merged",
+        confidence_score=result.confidence_score,
+        processing_time_ms=processing_ms,
+    )
+    
+    return {
+        "ipo_id": ipo_id,
+        "company_name": result.company_name,
+        "status": result.status,
+        "confidence_score": result.confidence_score,
+        "parsing_time_ms": processing_ms,
+        "data": result.model_dump(),
+    }
+
+
+@app.get(
+    "/api/ipos/{ipo_id}/parsed-data",
+    tags=["Parsing"],
+    summary="Get parsed IPO data",
+    description="""
+Returns structured data previously extracted by POST /api/ipos/{id}/parse.
+
+Includes: issue details, capital structure, financials, promoters, 
+intermediaries, and more — all with defaults so no fields are null.
+""",
+)
+async def get_parsed_ipo_data(
+    ipo_id: int = Path(..., description="IPO database ID"),
+):
+    # Check if IPO exists
+    ipo = db_service.get_ipo_by_id(ipo_id)
+    if not ipo:
+        raise HTTPException(status_code=404, detail="IPO not found")
+    
+    # Get parsed data
+    parsed = db_service.get_parsed_ipo_data(ipo_id, "merged")
+    if parsed:
+        return {
+            "ipo_id": ipo_id,
+            **parsed,
+        }
+    
+    # Check if text exists but hasn't been parsed yet
+    has_text = any([
+        db_service.get_document_text(ipo_id, "drhp"),
+        db_service.get_document_text(ipo_id, "rhp"),
+        db_service.get_document_text(ipo_id, "final_prospectus"),
+    ])
+    
+    if has_text:
+        raise HTTPException(
+            status_code=404,
+            detail="Text exists but not yet parsed. Run POST /api/ipos/{id}/parse first."
+        )
+    
+    raise HTTPException(
+        status_code=404,
+        detail="No extracted text or parsed data. Run POST /api/ipos/{id}/resolve then POST /api/ipos/{id}/parse."
+    )
+
+
+@app.get(
+    "/api/ipos/{ipo_id}/parsed-history",
+    tags=["Parsing"],
+    summary="Get all parsed data versions for an IPO",
+    description="Returns all parsing runs for this IPO, ordered newest first.",
+)
+async def get_parsed_data_history(
+    ipo_id: int = Path(..., description="IPO database ID"),
+):
+    ipo = db_service.get_ipo_by_id(ipo_id)
+    if not ipo:
+        raise HTTPException(status_code=404, detail="IPO not found")
+    
+    history = db_service.get_parsed_data_history(ipo_id)
+    return {"ipo_id": ipo_id, "company_name": ipo.company_name, "history": history}
+
+
 # ─── Status Changes ──────────────────────────────────────────
 
 @app.get(
@@ -405,7 +531,7 @@ async def refresh(
         False, description="Also resolve ZIP URLs and extract PDF text into DB"
     ),
     resolve_limit: int = Query(
-        50, ge=1, le=200, description="Max documents to resolve if resolve_docs=true"
+        50, ge=1, le=500, description="Max documents to resolve if resolve_docs=true"
     ),
 ):
     report = await scraper_service.run_full_scrape(

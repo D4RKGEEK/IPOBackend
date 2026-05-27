@@ -243,15 +243,22 @@ class DatabaseService:
     def get_unprocessed_documents(self, limit: int = 50) -> list[dict[str, Any]]:
         """
         Get IPOs with document URLs that haven't been processed yet.
-        Returns IPOs with ZIP URLs (or any URL that was never extracted).
+        Prioritizes ZIP URLs first, then recent PDFs.
         """
-        from sqlalchemy import or_
+        from sqlalchemy import or_, case
         with self._session() as session:
+            # Priority: ZIPs first, then recent PDFs
+            is_zip = case(
+                (IPOMaster.drhp_url.ilike('%.zip'), 1),
+                (IPOMaster.rhp_url.ilike('%.zip'), 1),
+                (IPOMaster.final_prospectus_url.ilike('%.zip'), 1),
+                else_=0
+            )
+            
             rows = (
                 session.query(IPOMaster)
                 .filter(
                     or_(
-                        # DRHP not processed AND has a URL
                         IPOMaster.drhp_processed == 0,
                         IPOMaster.rhp_processed == 0,
                     ),
@@ -261,7 +268,7 @@ class DatabaseService:
                         IPOMaster.final_prospectus_url.isnot(None),
                     ),
                 )
-                .order_by(IPOMaster.last_updated.desc())
+                .order_by(is_zip.desc(), IPOMaster.drhp_filed_date.desc().nullslast(), IPOMaster.id.desc())
                 .limit(limit)
                 .all()
             )
@@ -330,6 +337,86 @@ class DatabaseService:
             if record and record.extracted_data:
                 return record.extracted_data.get("text")
             return None
+
+    # ─── Parsed Data (Phase 2) ──────────────────────────
+
+    def save_parsed_ipo_data(
+        self,
+        ipo_id: int,
+        parsed_data: dict,
+        document_type: str = "merged",
+        confidence_score: float = 0.0,
+        processing_time_ms: int = 0,
+    ) -> int:
+        """Save structured parsed IPO data to ipo_parsed_data table."""
+        with self._session() as session:
+            record = IPOParsedData(
+                ipo_master_id=ipo_id,
+                data_type=f"parsed_{document_type}",
+                extracted_data=parsed_data,
+                confidence_score=confidence_score,
+                processing_time_ms=processing_time_ms,
+                extra={
+                    "extraction_version": "2.0",
+                    "source": "pipeline",
+                },
+            )
+            session.add(record)
+            session.commit()
+            return record.id
+
+    def get_parsed_ipo_data(
+        self,
+        ipo_id: int,
+        document_type: str = "merged",
+    ) -> Optional[dict]:
+        """Retrieve parsed IPO data."""
+        data_type = f"parsed_{document_type}"
+        with self._session() as session:
+            record = (
+                session.query(IPOParsedData)
+                .filter(
+                    IPOParsedData.ipo_master_id == ipo_id,
+                    IPOParsedData.data_type == data_type,
+                )
+                .order_by(IPOParsedData.extraction_date.desc())
+                .first()
+            )
+            if record and record.extracted_data:
+                return {
+                    "data": record.extracted_data,
+                    "confidence_score": record.confidence_score,
+                    "extraction_date": record.extraction_date.isoformat(),
+                    "processing_time_ms": record.processing_time_ms,
+                }
+            return None
+
+    def get_parsed_data_history(
+        self,
+        ipo_id: int,
+    ) -> list[dict]:
+        """Get all parsed data versions for an IPO."""
+        with self._session() as session:
+            records = (
+                session.query(IPOParsedData)
+                .filter(
+                    IPOParsedData.ipo_master_id == ipo_id,
+                    IPOParsedData.data_type.like('parsed_%'),
+                )
+                .order_by(IPOParsedData.extraction_date.desc())
+                .all()
+            )
+            return [
+                {
+                    "id": r.id,
+                    "data_type": r.data_type,
+                    "data": r.extracted_data,
+                    "confidence_score": r.confidence_score,
+                    "extraction_date": r.extraction_date.isoformat(),
+                    "processing_time_ms": r.processing_time_ms,
+                }
+                for r in records
+            ]
 
     # ─── Dashboard Stats (updated) ────────────────────────
 
