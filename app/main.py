@@ -301,7 +301,7 @@ async def resolve_ipo_documents(
     results = {}
     errors = []
     
-    async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=180) as client:
         for doc_type in ("drhp", "rhp", "final_prospectus"):
             url = docs.get(doc_type)
             if not url:
