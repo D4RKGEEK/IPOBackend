@@ -156,6 +156,39 @@ class ScraperLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class IPODocument(Base):
+    """Individual document records for an IPO (drhp, rhp, prospectus)."""
+    __tablename__ = "ipo_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ipo_master_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("ipo_master.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    doc_type: Mapped[str] = mapped_column(String(50), nullable=False)  # drhp, rhp, final_prospectus
+    doc_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    phase: Mapped[str] = mapped_column(String(20), nullable=False, default="discovered")  # discovered, downloading, downloaded, parsing, parsed, published
+    downloaded_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    parsed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.8)
+
+    # Timestamps
+    last_updated: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+    ipo = relationship("IPOMaster", backref="documents")
+
+    def __repr__(self):
+        return f"<IPODocument(id={self.id}, ipo={self.ipo_master_id}, type='{self.doc_type}', phase='{self.phase}')>"
+
+
 class IPOParsedData(Base):
     """Phase 2: Extracted data from PDFs."""
     __tablename__ = "ipo_parsed_data"
