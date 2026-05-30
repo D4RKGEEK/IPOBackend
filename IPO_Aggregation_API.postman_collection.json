@@ -1,0 +1,140 @@
+{
+  "info": {
+    "name": "IPO Aggregation API",
+    "description": "IPO Aggregation Platform — list IPOs, filter by documents, resolve PDFs into sections, parse via DeepSeek V4 Flash. All long operations run as background tasks — poll GET /api/tasks/{task_id} for progress.\n\nBase URL: http://127.0.0.1:8001\nDashboard: http://127.0.0.1:8002\nDocs: http://127.0.0.1:8001/docs",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "IPOs",
+      "item": [
+        {
+          "name": "List All IPOs",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos", "host": ["{{base_url}}"], "path": ["api", "ipos"] } }
+        },
+        {
+          "name": "Filter: DRHP only",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?documents=drhp", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "documents", "value": "drhp" }] } }
+        },
+        {
+          "name": "Filter: Has DRHP + RHP",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?documents=drhp,rhp", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "documents", "value": "drhp,rhp" }] } }
+        },
+        {
+          "name": "Filter: Any document",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?documents=any", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "documents", "value": "any" }] } }
+        },
+        {
+          "name": "Search by name",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?search=teamtech&documents=drhp,rhp", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "search", "value": "teamtech" }, { "key": "documents", "value": "drhp,rhp" }] } }
+        },
+        {
+          "name": "Filter by year + status",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?year=2025&status=listed", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "year", "value": "2025" }, { "key": "status", "value": "listed" }] } }
+        }
+      ]
+    },
+    {
+      "name": "IPO Detail",
+      "item": [
+        {
+          "name": "Get IPO by ID",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88", "host": ["{{base_url}}"], "path": ["api", "ipos", "88"] } }
+        },
+        {
+          "name": "Get Documents Overview",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/documents", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents"] } }
+        }
+      ]
+    },
+    {
+      "name": "Sections (Resolve + View)",
+      "item": [
+        {
+          "name": "Resolve Documents (Background)",
+          "description": "Downloads PDFs, finds section headers, extracts text. Returns task_id. Poll GET /api/tasks/{task_id} for progress.",
+          "request": { "method": "POST", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/resolve", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "resolve"] } }
+        },
+        {
+          "name": "List Sections (DRHP)",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/documents/drhp/sections", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents", "drhp", "sections"] } }
+        },
+        {
+          "name": "View Section Raw Text",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/documents/drhp/sections/CAPITAL_STRUCTURE", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents", "drhp", "sections", "CAPITAL_STRUCTURE"] } }
+        },
+        {
+          "name": "View Section Raw (Plain Text)",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/documents/drhp/sections/CAPITAL_STRUCTURE?raw=true", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents", "drhp", "sections", "CAPITAL_STRUCTURE"], "query": [{ "key": "raw", "value": "true" }] } }
+        },
+        {
+          "name": "List Sections (RHP)",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/documents/rhp/sections", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents", "rhp", "sections"] } }
+        }
+      ]
+    },
+    {
+      "name": "DeepSeek Parsing",
+      "item": [
+        {
+          "name": "Parse All Sections (2 calls, Background)",
+          "description": "2 DeepSeek V4 Flash calls (non-financial + financial). Returns unified JSON with all 60+ fields. Returns task_id — poll for result. Includes _raw_prompt and _raw_response for debugging.",
+          "request": { "method": "POST", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/parse-sections", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "parse-sections"] } }
+        },
+        {
+          "name": "Parse with Force (Re-parse)",
+          "description": "Re-parse even if already done. Use after re-resolving documents.",
+          "request": { "method": "POST", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/parse-sections?force=true", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "parse-sections"], "query": [{ "key": "force", "value": "true" }] } }
+        },
+        {
+          "name": "Get All Parsed Data (Unified JSON)",
+          "description": "Returns ALL extracted fields in one JSON. Every field present. Includes _raw_prompt, _raw_response, _sections_input for debugging. Recommended endpoint for consuming parsed data.",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/parsed-all", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "parsed-all"] } }
+        }
+      ]
+    },
+    {
+      "name": "Background Tasks",
+      "item": [
+        {
+          "name": "List Recent Tasks",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/tasks?limit=10", "host": ["{{base_url}}"], "path": ["api", "tasks"], "query": [{ "key": "limit", "value": "10" }] } }
+        },
+        {
+          "name": "Poll Task Status",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/tasks/abc123", "host": ["{{base_url}}"], "path": ["api", "tasks", "abc123"] } }
+        }
+      ]
+    },
+    {
+      "name": "System",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] } }
+        },
+        {
+          "name": "Trigger Scrape (Background)",
+          "description": "Full re-scrape from SEBI, BSE, NSE, BSE SME. Returns task_id. Poll GET /api/tasks/{task_id} for progress showing source counts + DB save progress.",
+          "request": { "method": "POST", "header": [], "url": { "raw": "{{base_url}}/api/refresh", "host": ["{{base_url}}"], "path": ["api", "refresh"] } }
+        },
+        {
+          "name": "Scrape by Year",
+          "description": "Only saves IPOs filed in 2026.",
+          "request": { "method": "POST", "header": [], "url": { "raw": "{{base_url}}/api/refresh?year=2026", "host": ["{{base_url}}"], "path": ["api", "refresh"], "query": [{ "key": "year", "value": "2026" }] } }
+        },
+        {
+          "name": "Dashboard Stats",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/dashboard/stats", "host": ["{{base_url}}"], "path": ["api", "dashboard", "stats"] } }
+        },
+        {
+          "name": "Status Changes",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/status-changes?limit=20", "host": ["{{base_url}}"], "path": ["api", "status-changes"], "query": [{ "key": "limit", "value": "20" }] } }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8001", "type": "string" }
+  ]
+}
