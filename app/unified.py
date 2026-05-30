@@ -46,9 +46,17 @@ def _is_better(new_doc_type: str, new_parsed_at: Optional[str],
 
 
 def _is_empty(v: Any) -> bool:
+    """Treat empties from BOTH LLM providers as 'no value'.
+
+    DeepSeek used to write 0 for missing numeric fields, "" for text, [] for arrays.
+    Firecrawl writes "" / [] / sometimes "●" (DRHP placeholder) / sometimes "[●]".
+    All of these are "this field wasn't found" and shouldn't overwrite a real value.
+    """
     if v is None: return True
     if isinstance(v, str): return v.strip() in ("", "●", "[●]", "-", "—", "N/A", "NA")
     if isinstance(v, (list, dict)): return len(v) == 0
+    # NUMERIC ZERO from the legacy DeepSeek parser also means "missing"
+    if isinstance(v, (int, float)) and v == 0: return True
     return False
 
 
@@ -82,7 +90,13 @@ def build_unified(ipo_id: int) -> dict[str, Any]:
         ipo_dict["nse_data"] = ipo.nse_data
         ctx = CrossSourceContext.from_ipo_row(ipo_dict)
 
-        for sec in sections:
+        # Prefer sections written by the new pipeline. Legacy DeepSeek sections
+        # stuffed all 60 fields into every section with zeros/empties — those
+        # leak garbage into unified_data if we merge them with real Firecrawl data.
+        firecrawl_sections = [s for s in sections if (s.parsed_data or {}).get("_provider") == "firecrawl"]
+        consider = firecrawl_sections if firecrawl_sections else sections
+
+        for sec in consider:
             data = sec.parsed_data or {}
             doc_type = sec.doc_type
             parsed_at_iso = sec.parsed_at.isoformat() if sec.parsed_at else None
