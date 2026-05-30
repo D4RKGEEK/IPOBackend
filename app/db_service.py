@@ -16,6 +16,7 @@ from .db_models import (
     ScraperLog,
     IPOParsedData,
     IPODocument,
+    DocumentSection,
     init_db,
     get_session,
 )
@@ -51,10 +52,14 @@ class DatabaseService:
         platform: Optional[str] = None,
         search: Optional[str] = None,
         year: Optional[int] = None,
+        documents: Optional[str] = None,
         page: int = 1,
         per_page: int = 25,
     ) -> tuple[list[dict[str, Any]], int]:
-        """Return (ipos_list, total_count). Filters are applied server-side."""
+        """Return (ipos_list, total_count). Filters are applied server-side.
+
+        documents: "drhp" (only), "drhp,rhp" (both), "any", "all"/None (no filter)
+        """
         with self._session() as session:
             query = session.query(IPOMaster)
 
@@ -70,6 +75,27 @@ class DatabaseService:
                 query = query.filter(
                     IPOMaster.drhp_filed_date.like(f"{year}%")
                 )
+
+            # Document filter
+            DOC_FIELDS = {
+                "drhp": IPOMaster.drhp_url,
+                "rhp": IPOMaster.rhp_url,
+                "fp": IPOMaster.final_prospectus_url,
+            }
+            if documents and documents != "all":
+                from sqlalchemy import or_, and_
+                doc_types = [d.strip().lower() for d in documents.split(",") if d.strip()]
+                if doc_types == ["any"]:
+                    query = query.filter(or_(*[f.isnot(None) for f in DOC_FIELDS.values()]))
+                elif len(doc_types) == 1:
+                    single = DOC_FIELDS.get(doc_types[0])
+                    if single:
+                        others = [f for dt, f in DOC_FIELDS.items() if dt != doc_types[0]]
+                        query = query.filter(single.isnot(None), *[f.is_(None) for f in others])
+                else:
+                    fields = [DOC_FIELDS[dt] for dt in doc_types if dt in DOC_FIELDS]
+                    if fields:
+                        query = query.filter(and_(*[f.isnot(None) for f in fields]))
 
             total = query.count()
             # Sort by most recently filed first. Fallback to discovery date.
@@ -699,3 +725,64 @@ class DatabaseService:
             session.delete(doc)
             session.commit()
             return True
+
+    # ─── Sections (ToC-based) ─────────────────────────────
+
+    def upsert_section(self, ipo_id, doc_type, section_name, page_start=None, page_end=None, raw_md=None):
+        with self._session() as session:
+            existing = session.query(DocumentSection).filter(
+                DocumentSection.ipo_master_id == ipo_id,
+                DocumentSection.doc_type == doc_type,
+                DocumentSection.section_name == section_name).first()
+            if existing:
+                existing.page_start = page_start; existing.page_end = page_end
+                existing.raw_md = raw_md; existing.char_count = len(raw_md) if raw_md else 0
+                existing.last_updated = datetime.now(timezone.utc)
+                doc_id = existing.id
+            else:
+                record = DocumentSection(ipo_master_id=ipo_id, doc_type=doc_type,
+                    section_name=section_name, page_start=page_start, page_end=page_end,
+                    raw_md=raw_md, char_count=len(raw_md) if raw_md else 0)
+                session.add(record); session.flush(); doc_id = record.id
+            session.commit(); return doc_id
+
+    def get_sections(self, ipo_id, doc_type=None):
+        with self._session() as session:
+            q = session.query(DocumentSection).filter(DocumentSection.ipo_master_id == ipo_id)
+            if doc_type: q = q.filter(DocumentSection.doc_type == doc_type)
+            q = q.order_by(DocumentSection.page_start.nullslast(), DocumentSection.id)
+            return [{"id":r.id,"doc_type":r.doc_type,"section_name":r.section_name,
+                     "page_start":r.page_start,"page_end":r.page_end,"char_count":r.char_count,
+                     "parsed":bool(r.parsed),
+                     "parsed_at":r.parsed_at.isoformat() if r.parsed_at else None} for r in q.all()]
+
+    def get_section_raw_md(self, ipo_id, doc_type, section_name):
+        with self._session() as session:
+            r = session.query(DocumentSection).filter(
+                DocumentSection.ipo_master_id == ipo_id,
+                DocumentSection.doc_type == doc_type,
+                DocumentSection.section_name == section_name).first()
+            return r.raw_md if r else None
+
+    def get_section_parsed(self, ipo_id, doc_type, section_name):
+        with self._session() as session:
+            r = session.query(DocumentSection).filter(
+                DocumentSection.ipo_master_id == ipo_id,
+                DocumentSection.doc_type == doc_type,
+                DocumentSection.section_name == section_name).first()
+            if r and r.parsed_data:
+                return {"data": r.parsed_data, "parsed_at": r.parsed_at.isoformat() if r.parsed_at else None}
+            return None
+
+    def mark_section_parsed(self, section_id, parsed_data):
+        with self._session() as session:
+            r = session.query(DocumentSection).filter(DocumentSection.id == section_id).first()
+            if not r: return False
+            r.parsed = True; r.parsed_data = parsed_data; r.parsed_at = datetime.now(timezone.utc)
+            session.commit(); return True
+
+    def delete_sections(self, ipo_id, doc_type=None):
+        with self._session() as session:
+            q = session.query(DocumentSection).filter(DocumentSection.ipo_master_id == ipo_id)
+            if doc_type: q = q.filter(DocumentSection.doc_type == doc_type)
+            count = q.delete(synchronize_session=False); session.commit(); return count

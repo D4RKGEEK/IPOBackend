@@ -203,6 +203,26 @@ class IPOParsedData(Base):
     processing_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
+class DocumentSection(Base):
+    """Extracted sections from PDFs (ToC-based)."""
+    __tablename__ = "document_sections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ipo_master_id: Mapped[int] = mapped_column(Integer, ForeignKey("ipo_master.id", ondelete="CASCADE"), nullable=False, index=True)
+    doc_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    section_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    page_start: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    page_end: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    char_count: Mapped[int] = mapped_column(Integer, default=0)
+    raw_md: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    parsed_data: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
+    parsed: Mapped[bool] = mapped_column(Integer, default=0)
+    parsed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_updated: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc),
+                                                    onupdate=lambda: datetime.now(timezone.utc))
+
+
 # ─── Engine and Session ──────────────────────────────────────────
 
 from sqlalchemy import create_engine
