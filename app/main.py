@@ -363,60 +363,13 @@ async def get_review_queue(
 
 
 @app.get("/api/ipos/{ipo_id}/parsed-all", tags=["Sections"],
-    summary="(Legacy) Merged JSON computed at read-time — prefer /unified",
-    description="Merges parsed_data across DRHP/RHP/FP and every section. "
-                "Doc-type preference is DRHP > RHP > FP for any conflicting field. "
-                "Internal keys (those starting with '_') are stripped from the merged result "
-                "but retained in `per_section` for debugging.")
+    summary="Alias for /unified — kept for backwards compatibility",
+    description="Same payload as /api/ipos/{id}/unified. The old per-section on-the-fly "
+                "merge has been removed — it picked up stale data from sections that were "
+                "parsed by the deprecated /parse-sections (DeepSeek) endpoint, which stuffed "
+                "the full 60-field blob into every section. Use /unified for new clients.")
 async def get_ipo_parsed_all(ipo_id: int = Path(...)):
-    ipo = db_service.get_ipo_by_id(ipo_id)
-    if not ipo:
-        raise HTTPException(404, "IPO not found")
-
-    # Walk every section's parsed_data, preferring DRHP > RHP > FP.
-    doc_preference = {"drhp": 0, "rhp": 1, "fp": 2}
-    per_section: dict[str, dict[str, Any]] = {}
-    parsed_at_max: Optional[str] = None
-
-    for dt in ("drhp", "rhp", "fp"):
-        for sec in db_service.get_sections(ipo_id, dt):
-            parsed = db_service.get_section_parsed(ipo_id, dt, sec["section_name"])
-            if not parsed or not parsed.get("data"):
-                continue
-            key = sec["section_name"]
-            existing = per_section.get(key)
-            if existing is None or doc_preference[dt] < doc_preference.get(existing.get("_doc_type", "fp"), 99):
-                payload = dict(parsed["data"])
-                payload.setdefault("_doc_type", dt)
-                payload.setdefault("_section_name", key)
-                payload["_parsed_at"] = parsed.get("parsed_at")
-                per_section[key] = payload
-            if parsed.get("parsed_at") and (not parsed_at_max or parsed["parsed_at"] > parsed_at_max):
-                parsed_at_max = parsed["parsed_at"]
-
-    if not per_section:
-        raise HTTPException(404, "No parsed data. Run /resolve then /parse-sections (or /parse-firecrawl).")
-
-    # Merge into one flat dict; later sections (alphabetical iteration order)
-    # don't overwrite earlier ones since IPO field names are disjoint across sections.
-    unified: dict[str, Any] = {}
-    for section_payload in per_section.values():
-        for k, v in section_payload.items():
-            if k.startswith("_"):
-                continue
-            # Don't overwrite an already-filled value with an empty string
-            if k in unified and (v == "" or v == [] or v is None):
-                continue
-            unified[k] = v
-
-    return {
-        "ipo_id": ipo_id,
-        "company_name": ipo.company_name,
-        "sections_count": len(per_section),
-        "last_parsed_at": parsed_at_max,
-        "data": unified,
-        "per_section": per_section,
-    }
+    return await get_ipo_unified(ipo_id)
 
 
 # ─── Resolve (background) ──────────────────────────────────
