@@ -242,9 +242,13 @@ async def refresh(resolve_docs: bool = Query(False), resolve_limit: int = Query(
     def _run(tid, mgr):
         import asyncio
         try:
-            mgr.update(tid, 0.1, "Scraping SEBI...")
+            async def on_progress(pct, label):
+                mgr.update(tid, pct, label)
+
+            mgr.update(tid, 0.05, "Starting scrape...")
             asyncio.run(scraper_service.run_full_scrape(bse_sme=True, include_pdf_urls=True,
-                resolve_docs=resolve_docs, resolve_doc_limit=resolve_limit, year=year))
+                resolve_docs=resolve_docs, resolve_doc_limit=resolve_limit, year=year,
+                progress_callback=on_progress))
             mgr.update(tid, 1.0, "Complete")
             return {"status":"ok","message":"Scrape completed"}
         except Exception as e: mgr.fail(tid, str(e)); raise

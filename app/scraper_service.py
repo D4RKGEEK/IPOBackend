@@ -8,11 +8,11 @@ detects new IPOs and status changes, and saves everything.
 """
 import asyncio
 import logging
-import time
-import sys
 import os
+import sys
+import time
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Callable
 
 import httpx
 
@@ -111,12 +111,12 @@ class ScraperService:
         resolve_docs: bool = False,
         resolve_doc_limit: int = 20,
         year: Optional[int] = None,
+        progress_callback: Optional[callable] = None,
     ) -> dict[str, Any]:
         """
         Scrape all sources, diff against DB, return a report.
 
-        Returns:
-            dict with: status, total_found, new_ipos, status_changes, errors, notes, execution_time_ms
+        progress_callback: optional async callable(progress, label) for real-time updates.
         """
         start_time = time.monotonic()
         self.logger.info("Starting full scrape of all sources...")
@@ -185,8 +185,18 @@ class ScraperService:
                 fetch_bse_sme(),
                 fetch_nse(),
             )
+            if progress_callback:
+                await progress_callback(0.3, f"SEBI/BSE/NSE done — {len(results)} raw records")
 
-        # Deduplicate in-memory (keep the richest record per company)
+        # Report raw counts
+        self.logger.info(f"Raw records collected: SEBI={len([r for r in results if r.source=='sebi'])}, "
+                         f"BSE={len([r for r in results if r.source=='bse'])}, "
+                         f"NSE={len([r for r in results if r.source=='nse'])}, "
+                         f"BSE_SME={len([r for r in results if r.source=='bse_sme'])}")
+        if progress_callback:
+            await progress_callback(0.4, f"Raw: {len(results)} records — merging & deduplicating...")
+
+        # Deduplicate in-memory
         merged: dict[str, IPORecord] = {}
         for r in results:
             key = normalize_company_name(r.company_name)
@@ -202,9 +212,12 @@ class ScraperService:
 
         deduped = list(merged.values())
         self.logger.info(f"Scraped {len(results)} raw records, deduped to {len(deduped)} unique IPOs")
-        
+        if progress_callback:
+            await progress_callback(0.5, f"{len(deduped)} unique IPOs — saving to DB...")
+
         # Save to database
-        for record in deduped:
+        saved = 0
+        for i, record in enumerate(deduped):
             try:
                 ipo_data = _record_to_ipo_data(record, ["sebi", "bse", "nse", "bse_sme"])
                 
@@ -219,11 +232,17 @@ class ScraperService:
                 _, is_new = self.db.upsert_ipo(ipo_data)
                 if is_new:
                     new_count += 1
+                    saved += 1
                     self.logger.info(f"  NEW IPO: {record.company_name} ({ipo_data['status']})")
                 else:
+                    saved += 1
                     # Check if status changed (we don't have the old status here,
                     # but upsert_ipo handles that internally via DB diff)
                     pass
+                # Update progress every 100 records
+                if progress_callback and saved % 100 == 0:
+                    pct = 0.5 + (saved / len(deduped)) * 0.4
+                    await progress_callback(pct, f"Saving to DB: {saved}/{len(deduped)} IPOs")
             except Exception as exc:
                 self.logger.error(f"Failed to save {record.company_name}: {exc}")
                 errors.append({"source": "database", "error": f"{record.company_name}: {exc}"})
