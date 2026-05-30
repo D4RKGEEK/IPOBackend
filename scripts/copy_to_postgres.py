@@ -141,6 +141,22 @@ def main() -> int:
 
     print(dim("─" * 60))
     print(bold(f"  Total: {total_copied} rows {'would be copied' if args.dry_run else 'copied'}"))
+
+    # Advance every auto-id sequence past existing rows. Required after copying
+    # data from SQLite — Postgres SEQUENCE objects don't move with the rows, so
+    # the next INSERT tries to use id=1 and collides.
+    if not args.dry_run and total_copied > 0:
+        print()
+        print(dim("Resetting Postgres sequences..."))
+        from sqlalchemy import text as _sql
+        with dest.begin() as conn:
+            for t in table_names:
+                if t not in dest_meta.tables: continue
+                seq = conn.execute(_sql(f"SELECT pg_get_serial_sequence('{t}', 'id')")).scalar()
+                if not seq: continue
+                max_id = conn.execute(_sql(f"SELECT COALESCE(MAX(id), 0) FROM {t}")).scalar() or 0
+                conn.execute(_sql(f"SELECT setval('{seq}', {max_id + 1}, false)"))
+                print(green(f"  ✓ {t:25s} seq → next={max_id + 1}"))
     return 0
 
 
