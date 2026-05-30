@@ -1,14 +1,37 @@
-.venv/
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+.Python
+
+# Environments / secrets
+.venv*/
+.env
+.env.local
+.env.*.local
+
+# Caches
 .pytest_cache/
-.DS_Store
-*.db
+.mypy_cache/
+.ruff_cache/
 .doc_cache/
-.env
-.venv*
-.env
-__pycache__/
-*.pyc
+
+# Editor / OS
 .DS_Store
-.ipos.db
+.idea/
+.vscode/
+*.swp
+
+# Project artifacts
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+dl/
+/tmp/
+
+# Build
+build/
+dist/
+*.egg-info/

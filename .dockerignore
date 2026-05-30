@@ -1,0 +1,65 @@
+# Exclude everything except what's needed in the image.
+# Build context bloat = slow `docker build` + bigger image cache.
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Virtual envs (huge — never copy)
+.venv*/
+venv/
+
+# Local data + DBs
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+ipos.db
+.doc_cache/
+dl/
+/tmp/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Test + CI artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# VCS
+.git/
+.gitignore
+
+# Secrets — NEVER include
+.env
+.env.local
+.env.*.local
+
+# Local-only scripts/files
+PARSING_ARCHITECTURE.md
+PRODUCTION_VISION.md
+postman/
+
+# Logs
+*.log
+
+# Docker meta
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Deploy configs (host-specific, not needed inside the container)
+fly.toml
+railway.toml
+Procfile
+.github/

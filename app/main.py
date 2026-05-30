@@ -1,34 +1,89 @@
 """
-IPO Aggregation API v3.0 — DB-Backed
-"""
-import os
+IPO Aggregation API v3.0 — DB-backed.
 
-import asyncio
+Boot-time concerns:
+  - SSL cert: macOS-Homebrew openssl path is set automatically if present so
+    httpx works on local dev. On Linux/CI the system trust store is used.
+  - Config will move to app.config in a later refactor; for now env vars and
+    the .env file are read where needed (db_service, storage, parsers).
+"""
 import logging
-from datetime import datetime, timezone
+import os
 from math import ceil
-from typing import Literal, Optional, Any
+from typing import Any, Optional
+
+# Auto-detect a usable SSL cert bundle without hardcoding macOS paths.
+for _cert_path in (
+    os.environ.get("SSL_CERT_FILE"),
+    "/opt/homebrew/etc/openssl@3/cert.pem",   # macOS (Apple Silicon)
+    "/usr/local/etc/openssl@3/cert.pem",      # macOS (Intel)
+    "/etc/ssl/certs/ca-certificates.crt",     # Debian/Ubuntu
+    "/etc/pki/tls/certs/ca-bundle.crt",       # RHEL/CentOS
+):
+    if _cert_path and os.path.exists(_cert_path):
+        os.environ.setdefault("SSL_CERT_FILE", _cert_path)
+        os.environ.setdefault("REQUESTS_CA_BUNDLE", _cert_path)
+        break
 
 import httpx
-# Fix SSL cert path (AFTER httpx import to avoid import hang)
-os.environ.setdefault("SSL_CERT_FILE", "/opt/homebrew/etc/openssl@3/cert.pem")
-os.environ.setdefault("REQUESTS_CA_BUNDLE", "/opt/homebrew/etc/openssl@3/cert.pem")
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query
+from fastapi.middleware.cors import CORSMiddleware
 
-from fastapi import FastAPI, HTTPException, Query, Path
 
-from .clients import (BSEClient, BSESmeClient, NSEClient, SEBIClient,
-    merge_bse_into_results, merge_bse_sme_docs, merge_nse_into_results)
-from .schemas import (IPOResponse, IPOSummary, Meta, Pagination,
-    StatusChangeItem, ScraperLogItem, RefreshResult, IPODetail, StatusHistoryEntry)
-from .status import compute_status, compute_dates, compute_documents
-from .scraper_service import ScraperService, _record_to_ipo_data, _source_count
+def _require_internal_key(
+    x_internal_key: str | None = Header(default=None, alias="X-Internal-Key"),
+    authorization: str | None = Header(default=None),
+) -> None:
+    """Gate write/cron endpoints when INTERNAL_API_KEY is set.
+
+    Accepts the key via either:
+        X-Internal-Key: <key>
+        Authorization: Bearer <key>
+
+    When INTERNAL_API_KEY is blank (local dev), the gate is open.
+    """
+    from .config import settings
+    expected = settings.internal_api_key.strip()
+    if not expected:
+        return  # auth disabled
+    provided = x_internal_key
+    if not provided and authorization and authorization.lower().startswith("bearer "):
+        provided = authorization.split(None, 1)[1].strip()
+    if provided != expected:
+        raise HTTPException(status_code=401, detail="invalid or missing internal API key")
+
+from .config import settings
 from .db_service import DatabaseService
-from .parsers.pipeline import parse_all_available, parse_document
-from .section_resolver import resolve_document
+from .logging_setup import configure_logging
+from .schemas import (
+    IPOResponse,
+    IPOSummary,
+    Meta,
+    Pagination,
+    ScraperLogItem,
+    StatusChangeItem,
+)
+from .scraper_service import ScraperService
 from .section_parser import parse_all_sections
+from .section_resolver import resolve_document
 from .task_manager import get_manager, run_in_background
 
+try:
+    from .storage.r2 import section_url as _r2_section_url
+except Exception:
+    _r2_section_url = None
+
+configure_logging()
 logger = logging.getLogger(__name__)
+
+
+def _attach_r2_url(section: dict, ipo_id: int) -> dict:
+    """Add r2_url to a section dict if R2 is configured. Deterministic — no I/O."""
+    if _r2_section_url is None or not settings.r2_enabled:
+        return section
+    section = dict(section)
+    section["r2_url"] = _r2_section_url(ipo_id, section["doc_type"], section["section_name"])
+    return section
 
 # ─── App Setup ───────────────────────────────────────────────
 
@@ -59,14 +114,100 @@ scraper_service = ScraperService(db=db_service)
 
 
 # ─── Health ───────────────────────────────────────────────────
-@app.get("/health", tags=["System"])
-async def health() -> dict[str, Any]:
+@app.get("/health", tags=["System"], summary="Liveness + dependency reachability check")
+async def health(deep: bool = Query(False, description="Probe external services (R2, Firecrawl, DeepSeek)")) -> dict[str, Any]:
+    """Returns 200 with per-component status. Set ?deep=true to actually probe upstreams.
+
+    Default mode is fast (DB only) so this can be used as a liveness probe.
+    Deep mode performs lightweight HEAD/list calls against R2/Firecrawl/DeepSeek.
+    """
+    checks: dict[str, dict[str, Any]] = {}
+    overall_ok = True
+
+    # DB (always checked, cheap)
     try:
         stats = db_service.get_dashboard_stats()
-        return {"status": "ok", "database": "connected", "total_ipos": stats.get("total_ipos", 0),
-                "avg_confidence": stats.get("avg_confidence", 0.0), "last_scrape": stats.get("latest_scrape")}
+        checks["database"] = {"ok": True, "total_ipos": stats.get("total_ipos", 0)}
     except Exception as e:
-        return {"status": "error", "database": "error", "error": str(e)}
+        overall_ok = False
+        checks["database"] = {"ok": False, "error": str(e)[:200]}
+
+    # Config (does .env look complete?)
+    checks["config"] = {
+        "r2_configured": settings.r2_enabled,
+        "deepseek_configured": bool(settings.deepseek_api_key),
+        "firecrawl_configured": bool(settings.firecrawl_api_key),
+        "parser_provider": settings.parser_provider,
+    }
+
+    if deep:
+        # R2: list bucket (cheap, just checks creds + reachability)
+        if settings.r2_enabled:
+            try:
+                from .storage.r2 import _client as _r2_client
+                _r2_client().list_objects_v2(Bucket=settings.r2_bucket, MaxKeys=1)
+                checks["r2"] = {"ok": True, "bucket": settings.r2_bucket}
+            except Exception as e:
+                overall_ok = False
+                checks["r2"] = {"ok": False, "error": str(e)[:200]}
+        else:
+            checks["r2"] = {"ok": False, "skipped": "not configured"}
+
+        # Firecrawl: HEAD /v1 (no separate health endpoint; we trust DNS+TLS)
+        if settings.firecrawl_api_key:
+            try:
+                async with httpx.AsyncClient(timeout=10) as c:
+                    r = await c.get("https://api.firecrawl.dev/v1/team", headers={
+                        "Authorization": f"Bearer {settings.firecrawl_api_key}",
+                    })
+                # Any 2xx/4xx means the API is reachable; only network-level failures count as down.
+                checks["firecrawl"] = {"ok": r.status_code < 500, "status_code": r.status_code}
+                if r.status_code >= 500:
+                    overall_ok = False
+            except Exception as e:
+                overall_ok = False
+                checks["firecrawl"] = {"ok": False, "error": str(e)[:200]}
+        else:
+            checks["firecrawl"] = {"ok": False, "skipped": "not configured"}
+
+        # DeepSeek: cheap GET on the models endpoint
+        if settings.deepseek_api_key:
+            try:
+                async with httpx.AsyncClient(timeout=10) as c:
+                    r = await c.get("https://api.deepseek.com/v1/models", headers={
+                        "Authorization": f"Bearer {settings.deepseek_api_key}",
+                    })
+                checks["deepseek"] = {"ok": r.status_code < 500, "status_code": r.status_code}
+                if r.status_code >= 500:
+                    overall_ok = False
+            except Exception as e:
+                overall_ok = False
+                checks["deepseek"] = {"ok": False, "error": str(e)[:200]}
+        else:
+            checks["deepseek"] = {"ok": False, "skipped": "not configured"}
+
+    return {
+        "status": "ok" if overall_ok else "degraded",
+        "version": settings.version,
+        "deep": deep,
+        "checks": checks,
+    }
+
+
+# ─── Notifications ────────────────────────────────────────
+@app.post("/api/internal/notify/test", tags=["System"],
+    summary="Send a test notification through every configured channel")
+async def notify_test():
+    """Synchronously hits Telegram + Gmail (whichever are configured) and
+    reports per-channel success. Use this after setting env vars to confirm
+    the wiring works before relying on it for production alerts."""
+    from .notifications import test_channels
+    result = test_channels()
+    overall_ok = all(
+        (ch.get("ok") is True) or (ch.get("enabled") is False)
+        for ch in result.values()
+    )
+    return {"ok": overall_ok, "channels": result}
 
 
 # ─── Task Management ──────────────────────────────────────
@@ -123,7 +264,7 @@ async def get_documents_overview(ipo_id: int = Path(...)):
     result = {"ipo_id": ipo_id, "company_name": ipo.company_name, "documents": {}}
     for dt in ("drhp", "rhp", "final_prospectus"):
         key = "fp" if dt == "final_prospectus" else dt
-        sections = db_service.get_sections(ipo_id, key)
+        sections = [_attach_r2_url(s, ipo_id) for s in db_service.get_sections(ipo_id, key)]
         result["documents"][dt] = {"url": docs.get(dt), "section_count": len(sections), "sections": sections}
     return result
 
@@ -132,7 +273,7 @@ async def get_sections(ipo_id: int = Path(...), doc_type: str = Path(...)):
     if doc_type not in ("drhp", "rhp", "fp"): raise HTTPException(400, "doc_type must be drhp, rhp, or fp")
     ipo = db_service.get_ipo_by_id(ipo_id)
     if not ipo: raise HTTPException(404, "IPO not found")
-    sections = db_service.get_sections(ipo_id, doc_type)
+    sections = [_attach_r2_url(s, ipo_id) for s in db_service.get_sections(ipo_id, doc_type)]
     return {"ipo_id": ipo_id, "company_name": ipo.company_name, "doc_type": doc_type,
             "section_count": len(sections), "sections": sections}
 
@@ -162,18 +303,120 @@ async def get_section_parsed(ipo_id: int = Path(...), doc_type: str = Path(...),
     return {"ipo_id": ipo_id, "company_name": ipo.company_name, "section_name": sn,
             "doc_type": doc_type, "data": parsed.get("data"), "parsed_at": parsed.get("parsed_at")}
 
+@app.get("/api/ipos/{ipo_id}/unified", tags=["Sections"],
+    summary="The contract shipped to Next.js — unified extracted JSON for one IPO",
+    description="Reads ipo_master.unified_data directly (no merge at read-time). "
+                "Returns unified data + provenance (where each field came from) + "
+                "publish_status + confidence_score. If publish_status='needs_review' "
+                "or 'rejected', the data exists but should NOT be treated as canonical.")
+async def get_ipo_unified(ipo_id: int = Path(..., ge=1)):
+    ipo = db_service.get_ipo_by_id(ipo_id)
+    if not ipo:
+        raise HTTPException(404, "IPO not found")
+    if not ipo.unified_data:
+        raise HTTPException(404, "No unified data yet. Run /resolve then /parse-firecrawl.")
+    return {
+        "ipo_id": ipo_id,
+        "company_name": ipo.company_name,
+        "status": ipo.status,
+        "publish_status": ipo.publish_status,
+        "confidence_score": ipo.confidence_score,
+        "unified_version": ipo.unified_version,
+        "unified_updated_at": ipo.unified_updated_at.isoformat() if ipo.unified_updated_at else None,
+        "validation_issues": ipo.validation_issues or [],
+        "data": ipo.unified_data,
+        "provenance": ipo.unified_provenance or {},
+    }
+
+
+@app.get("/api/review-queue", tags=["Sections"],
+    summary="IPOs that need human review (low confidence or validation issues)")
+async def get_review_queue(
+    limit: int = Query(50, ge=1, le=200),
+    publish_status: str = Query("needs_review", description="needs_review | rejected | pending"),
+):
+    from .db_models import IPOMaster, get_session
+    with get_session() as s:
+        rows = (
+            s.query(IPOMaster)
+            .filter(IPOMaster.publish_status == publish_status)
+            .order_by(IPOMaster.unified_updated_at.desc().nullslast(), IPOMaster.id.desc())
+            .limit(limit)
+            .all()
+        )
+        return {
+            "publish_status": publish_status,
+            "count": len(rows),
+            "ipos": [
+                {
+                    "ipo_id": r.id,
+                    "company_name": r.company_name,
+                    "status": r.status,
+                    "confidence_score": r.confidence_score,
+                    "validation_issues": r.validation_issues or [],
+                    "unified_version": r.unified_version,
+                    "unified_updated_at": r.unified_updated_at.isoformat() if r.unified_updated_at else None,
+                }
+                for r in rows
+            ],
+        }
+
+
 @app.get("/api/ipos/{ipo_id}/parsed-all", tags=["Sections"],
-    summary="Get ALL parsed data for an IPO in one unified JSON")
+    summary="(Legacy) Merged JSON computed at read-time — prefer /unified",
+    description="Merges parsed_data across DRHP/RHP/FP and every section. "
+                "Doc-type preference is DRHP > RHP > FP for any conflicting field. "
+                "Internal keys (those starting with '_') are stripped from the merged result "
+                "but retained in `per_section` for debugging.")
 async def get_ipo_parsed_all(ipo_id: int = Path(...)):
     ipo = db_service.get_ipo_by_id(ipo_id)
-    if not ipo: raise HTTPException(404, "IPO not found")
+    if not ipo:
+        raise HTTPException(404, "IPO not found")
+
+    # Walk every section's parsed_data, preferring DRHP > RHP > FP.
+    doc_preference = {"drhp": 0, "rhp": 1, "fp": 2}
+    per_section: dict[str, dict[str, Any]] = {}
+    parsed_at_max: Optional[str] = None
+
     for dt in ("drhp", "rhp", "fp"):
         for sec in db_service.get_sections(ipo_id, dt):
             parsed = db_service.get_section_parsed(ipo_id, dt, sec["section_name"])
-            if parsed and parsed.get("data"):
-                return {"ipo_id": ipo_id, "company_name": ipo.company_name,
-                        "data": parsed["data"], "parsed_at": parsed.get("parsed_at")}
-    raise HTTPException(404, "No parsed data. Run resolve then parse-sections.")
+            if not parsed or not parsed.get("data"):
+                continue
+            key = sec["section_name"]
+            existing = per_section.get(key)
+            if existing is None or doc_preference[dt] < doc_preference.get(existing.get("_doc_type", "fp"), 99):
+                payload = dict(parsed["data"])
+                payload.setdefault("_doc_type", dt)
+                payload.setdefault("_section_name", key)
+                payload["_parsed_at"] = parsed.get("parsed_at")
+                per_section[key] = payload
+            if parsed.get("parsed_at") and (not parsed_at_max or parsed["parsed_at"] > parsed_at_max):
+                parsed_at_max = parsed["parsed_at"]
+
+    if not per_section:
+        raise HTTPException(404, "No parsed data. Run /resolve then /parse-sections (or /parse-firecrawl).")
+
+    # Merge into one flat dict; later sections (alphabetical iteration order)
+    # don't overwrite earlier ones since IPO field names are disjoint across sections.
+    unified: dict[str, Any] = {}
+    for section_payload in per_section.values():
+        for k, v in section_payload.items():
+            if k.startswith("_"):
+                continue
+            # Don't overwrite an already-filled value with an empty string
+            if k in unified and (v == "" or v == [] or v is None):
+                continue
+            unified[k] = v
+
+    return {
+        "ipo_id": ipo_id,
+        "company_name": ipo.company_name,
+        "sections_count": len(per_section),
+        "last_parsed_at": parsed_at_max,
+        "data": unified,
+        "per_section": per_section,
+    }
 
 
 # ─── Resolve (background) ──────────────────────────────────
@@ -232,11 +475,44 @@ async def parse_ipo_sections(ipo_id: int = Path(...), force: bool = Query(False)
     return {"task_id":task_id,"status":"started","message":f"Parsing in background. Poll GET /api/tasks/{task_id}"}
 
 
+# ─── Parse Sections via Firecrawl (background) ─────────────
+@app.post("/api/ipos/{ipo_id}/parse-firecrawl", tags=["Sections"],
+    summary="Parse sections one-at-a-time via Firecrawl (R2-hosted markdown)",
+    description="Sends each target section's R2 URL + JSON schema to Firecrawl. "
+                "Cheaper and more accurate than the merged DeepSeek call because each "
+                "extraction is targeted to a small schema. Returns task_id; poll /api/tasks/{id}.")
+async def parse_ipo_sections_firecrawl(ipo_id: int = Path(...), force: bool = Query(False)):
+    from .parsers.firecrawl_parser import parse_all_sections_firecrawl
+    ipo = db_service.get_ipo_by_id(ipo_id)
+    if not ipo:
+        raise HTTPException(404, "IPO not found")
+    task_id = get_manager().create("parse_firecrawl", f"Firecrawl {ipo.company_name}")
+
+    def _run(tid, mgr):
+        try:
+            def _progress(pct: float, label: str):
+                mgr.update(tid, pct, label)
+            result = parse_all_sections_firecrawl(
+                ipo_id, company_name=ipo.company_name, force=force, progress=_progress,
+            )
+            mgr.update(tid, 1.0, "Complete")
+            return result
+        except Exception as e:
+            mgr.fail(tid, str(e))
+            raise
+
+    await run_in_background(task_id, _run)
+    return {"task_id": task_id, "status": "started",
+            "message": f"Firecrawl parse started. Poll GET /api/tasks/{task_id}"}
+
+
 # ─── Refresh (background) ──────────────────────────────────
 @app.post("/api/refresh", tags=["Aggregation"],
     summary="Trigger a full re-scrape in the background")
-async def refresh(resolve_docs: bool = Query(False), resolve_limit: int = Query(50, ge=1, le=500),
-                  year: Optional[int] = Query(None)):
+async def refresh(
+    year: Optional[int] = Query(None, description="Limit to a specific filing year (e.g. 2026)."),
+    _auth: None = Depends(_require_internal_key),
+):
     task_id = get_manager().create("scrape", f"Scrape IPOs (year={year or 'all'})")
 
     def _run(tid, mgr):
@@ -246,11 +522,12 @@ async def refresh(resolve_docs: bool = Query(False), resolve_limit: int = Query(
                 mgr.update(tid, pct, label)
 
             mgr.update(tid, 0.05, "Starting scrape...")
-            asyncio.run(scraper_service.run_full_scrape(bse_sme=True, include_pdf_urls=True,
-                resolve_docs=resolve_docs, resolve_doc_limit=resolve_limit, year=year,
-                progress_callback=on_progress))
+            asyncio.run(scraper_service.run_full_scrape(
+                bse_sme=True, include_pdf_urls=True, year=year,
+                progress_callback=on_progress,
+            ))
             mgr.update(tid, 1.0, "Complete")
-            return {"status":"ok","message":"Scrape completed"}
+            return {"status": "ok", "message": "Scrape completed"}
         except Exception as e: mgr.fail(tid, str(e)); raise
 
     await run_in_background(task_id, _run)

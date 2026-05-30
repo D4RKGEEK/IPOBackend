@@ -1,55 +1,90 @@
 """
-Dashboard — FastAPI + Jinja2 admin panel for IPO management.
-Shares the same DB as the Phase 1 API.
-Run: uvicorn dashboard.main:app --port 8002
-"""
-import sys, os
-os.environ.setdefault("SSL_CERT_FILE", "/opt/homebrew/etc/openssl@3/cert.pem")
-os.environ.setdefault("REQUESTS_CA_BUNDLE", "/opt/homebrew/etc/openssl@3/cert.pem")
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+IPO Admin Dashboard (Jinja2 + Tailwind).
 
-import asyncio
+Hybrid arch:
+  - Reads (list, detail) hit DatabaseService directly for speed.
+  - Writes (resolve, parse, scrape) call the FastAPI API on port 8001 — that
+    layer owns the background-task queue and business logic.
+
+Run: uvicorn dashboard.main:app --port 8002 --reload
+"""
+from __future__ import annotations
+
 import logging
-from datetime import datetime, timezone
+import os
+import sys
 from typing import Optional
 
-from fastapi import FastAPI, Form, Query, Path, Request
-from fastapi.responses import RedirectResponse, HTMLResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
+# Ensure project root is on sys.path before app.* imports.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Auto-detect a usable SSL cert bundle (same logic as app.main).
+for _cert_path in (
+    os.environ.get("SSL_CERT_FILE"),
+    "/opt/homebrew/etc/openssl@3/cert.pem",
+    "/usr/local/etc/openssl@3/cert.pem",
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+):
+    if _cert_path and os.path.exists(_cert_path):
+        os.environ.setdefault("SSL_CERT_FILE", _cert_path)
+        os.environ.setdefault("REQUESTS_CA_BUNDLE", _cert_path)
+        break
+
+from fastapi import FastAPI, Path, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+from app.db_models import IPOMaster, get_session
 from app.db_service import DatabaseService
-from app.scraper_service import ScraperService
-from app.db_models import get_session, IPOMaster
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="IPO Dashboard", version="1.0")
+app = FastAPI(title="IPO Dashboard", version="3.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-from jinja2 import Environment, FileSystemLoader
-jinja_env = Environment(loader=FileSystemLoader(template_dir), auto_reload=False)
+_template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+_jinja = Environment(
+    loader=FileSystemLoader(_template_dir),
+    autoescape=select_autoescape(["html", "xml"]),
+    auto_reload=True,
+)
+
+db = DatabaseService()
+
 
 def render(name: str, context: dict) -> HTMLResponse:
-    template = jinja_env.get_template(name)
-    content = template.render(context)
-    return HTMLResponse(content)
-db = DatabaseService()
-scraper = ScraperService(db=db)
+    return HTMLResponse(_jinja.get_template(name).render(context))
 
 
-def get_stats():
-    """Common stats for sidebar."""
-    return db.get_dashboard_stats()
+def _stats() -> dict:
+    """Cached-ish stats payload used by the sidebar pipeline indicator."""
+    try:
+        return db.get_dashboard_stats()
+    except Exception as e:
+        logger.warning("get_dashboard_stats failed: %s", e)
+        return {
+            "total_ipos": 0, "total_with_drhp": 0, "total_with_rhp": 0,
+            "avg_confidence": 0.0, "ipos_by_status": {}, "ipos_by_platform": {},
+            "latest_scrape": None,
+        }
+
+
+# ─── Pages ──────────────────────────────────────────────────────────
+
+@app.get("/", include_in_schema=False)
+async def root():
+    return RedirectResponse("/dashboard/")
 
 
 @app.get("/dashboard/", response_class=HTMLResponse)
-async def index(request: Request):
-    stats = get_stats()
-    changes = db.get_recent_status_changes(limit=20)
+async def overview(request: Request):
     return render("index.html", {
-        "request": request, "stats": stats, "recent_changes": changes,
+        "request": request,
+        "stats": _stats(),
+        "recent_changes": db.get_recent_status_changes(limit=20),
+        "recent_logs": db.get_recent_logs(limit=15),
     })
 
 
@@ -57,186 +92,58 @@ async def index(request: Request):
 async def ipo_list(
     request: Request,
     page: int = Query(1, ge=1),
+    per_page: int = Query(25, ge=5, le=100),
     search: str = Query(""),
     status: str = Query("all"),
-    phase: str = Query("all"),
+    platform: str = Query("all"),
+    documents: str = Query("all"),
+    year: Optional[int] = Query(None),
 ):
-    ipos_list, total = db.get_all_ipos(
-        status=status, search=search, page=page, per_page=25,
+    ipos, total = db.get_all_ipos(
+        status=status, platform=platform, search=search, year=year,
+        documents=documents, page=page, per_page=per_page,
     )
-    # If phase filter is set, filter in-memory (phase is new, not in get_all_ipos)
-    if phase != "all":
-        ipos_list = [i for i in ipos_list if i.get("phase") == phase]
-        total = len(ipos_list)
-    
-    per_page = 25
     total_pages = max(1, (total + per_page - 1) // per_page)
-    
     return render("ipos.html", {
-        "request": request, "stats": get_stats(),
-        "ipos": ipos_list, "total": total,
-        "page": page, "total_pages": total_pages,
-        "search": search, "status": status, "phase": phase,
+        "request": request, "stats": _stats(),
+        "ipos": ipos, "total": total, "page": page,
+        "total_pages": total_pages, "per_page": per_page,
+        "filters": {
+            "search": search, "status": status, "platform": platform,
+            "documents": documents, "year": year,
+        },
     })
-
-
-@app.get("/dashboard/ipos/add", response_class=HTMLResponse)
-async def ipo_add_form(request: Request):
-    return render("ipo_form.html", {
-        "request": request, "stats": get_stats(), "ipo": None,
-    })
-
-
-@app.post("/dashboard/ipos/add")
-async def ipo_add_submit(
-    request: Request,
-    company_name: str = Form(...),
-    status: str = Form("drhp_filed"),
-    cin: str = Form(""),
-    platform: str = Form(""),
-    price_band: str = Form(""),
-    website: str = Form(""),
-    drhp_url: str = Form(""),
-    rhp_url: str = Form(""),
-    drhp_filed_date: str = Form(""),
-    close_date: str = Form(""),
-    face_value: float = Form(0.0),
-):
-    from app.utils import normalize_company_name
-    
-    ipo_data = {
-        "normalized_name": normalize_company_name(company_name),
-        "company_name": company_name,
-        "status": status,
-        "price_band": price_band or None,
-        "platform": platform or None,
-        "drhp_url": drhp_url or None,
-        "rhp_url": rhp_url or None,
-        "drhp_filed_date": drhp_filed_date or None,
-        "close_date": close_date or None,
-        "data_confidence": 0.5,
-        "source_count": 1,
-        "phase": "discovered",
-        "_source": "manual",
-        "_triggered_by": "manual",
-    }
-    
-    # Store CIN and website via direct DB update
-    record, is_new = db.upsert_ipo(ipo_data)
-    if cin:
-        with get_session() as s:
-            ipo = s.query(IPOMaster).filter(IPOMaster.id == record.id).first()
-            if ipo:
-                ipo.cin_field = cin
-                s.commit()
-    
-    return RedirectResponse(f"/dashboard/ipos/{record.id}", status_code=303)
 
 
 @app.get("/dashboard/ipos/{ipo_id}", response_class=HTMLResponse)
-async def ipo_detail(request: Request, ipo_id: int = Path(...)):
+async def ipo_detail(request: Request, ipo_id: int = Path(..., ge=1)):
     ipo = db.get_ipo_by_id(ipo_id)
     if not ipo:
         return HTMLResponse("IPO not found", status_code=404)
-    
-    history = db.get_status_history(ipo_id, limit=50)
-    stats = get_stats()
-    d = ipo.to_dict()
-    d["cin"] = getattr(ipo, "cin_field", "")  # Handle CIN
-    d["website"] = getattr(ipo, "cin_field", "")  # Will be in to_dict
-    
     return render("ipo_detail.html", {
-        "request": request, "stats": stats,
-        "ipo": d, "status_history": history,
-    })
-
-
-@app.get("/dashboard/ipos/{ipo_id}/edit", response_class=HTMLResponse)
-async def ipo_edit_form(request: Request, ipo_id: int = Path(...)):
-    ipo = db.get_ipo_by_id(ipo_id)
-    if not ipo:
-        return HTMLResponse("IPO not found", status_code=404)
-    return render("ipo_form.html", {
-        "request": request, "stats": get_stats(),
+        "request": request, "stats": _stats(),
         "ipo": ipo.to_dict(),
+        "status_history": db.get_status_history(ipo_id, limit=50),
     })
 
-
-@app.post("/dashboard/ipos/{ipo_id}/edit")
-async def ipo_edit_submit(
-    request: Request,
-    ipo_id: int = Path(...),
-    company_name: str = Form(...),
-    status: str = Form(...),
-    cin: str = Form(""),
-    platform: str = Form(""),
-    price_band: str = Form(""),
-    website: str = Form(""),
-    drhp_url: str = Form(""),
-    rhp_url: str = Form(""),
-    drhp_filed_date: str = Form(""),
-    close_date: str = Form(""),
-):
-    from app.utils import normalize_company_name
-    
-    ipo_data = {
-        "normalized_name": normalize_company_name(company_name),
-        "company_name": company_name,
-        "status": status,
-        "price_band": price_band or None,
-        "platform": platform or None,
-        "drhp_url": drhp_url or None,
-        "rhp_url": rhp_url or None,
-        "drhp_filed_date": drhp_filed_date or None,
-        "close_date": close_date or None,
-        "_source": "manual",
-        "_triggered_by": "manual",
-    }
-    db.upsert_ipo(ipo_data)
-    return RedirectResponse(f"/dashboard/ipos/{ipo_id}", status_code=303)
-
-
-@app.get("/dashboard/ipos/{ipo_id}/delete")
-async def ipo_delete(request: Request, ipo_id: int = Path(...)):
-    with get_session() as s:
-        ipo = s.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
-        if ipo:
-            s.delete(ipo)
-            s.commit()
-    return RedirectResponse("/dashboard/ipos", status_code=303)
-
-
-# ─── Phase Transitions / Parsed View ──────────────────────
-
-@app.get("/dashboard/ipos/{ipo_id}/delete")
 
 @app.get("/dashboard/scrape", response_class=HTMLResponse)
 async def scrape_page(request: Request):
-    logs = db.get_recent_logs(limit=20)
     return render("scrape.html", {
-        "request": request, "stats": get_stats(),
-        "recent_logs": logs, "scrape_result": None,
+        "request": request, "stats": _stats(),
+        "recent_logs": db.get_recent_logs(limit=20),
+        "scrape_result": None,
     })
 
 
-@app.post("/dashboard/scrape/run")
-async def scrape_run(request: Request, resolve_docs: bool = Query(False), year: Optional[int] = Query(None)):
-    report = await scraper.run_full_scrape(
-        bse_sme=True,
-        include_pdf_urls=True,
-        resolve_docs=resolve_docs,
-        year=year,
-    )
-    logs = db.get_recent_logs(limit=20)
-    return render("scrape.html", {
-        "request": request, "stats": get_stats(),
-        "recent_logs": logs, "scrape_result": report,
-    })
-
-
-@app.get("/dashboard/logs", response_class=HTMLResponse)
-async def logs_page(request: Request):
-    logs = db.get_recent_logs(limit=100)
-    return render("logs.html", {
-        "request": request, "stats": get_stats(), "logs": logs,
-    })
+@app.delete("/dashboard/api/ipos/{ipo_id}")
+async def delete_ipo(ipo_id: int = Path(..., ge=1)):
+    """Hard-delete an IPO (cascades to sections + status history via ORM)."""
+    with get_session() as s:
+        row = s.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
+        if not row:
+            return {"status": "not_found", "ipo_id": ipo_id}
+        name = row.company_name
+        s.delete(row)
+        s.commit()
+    return {"status": "deleted", "ipo_id": ipo_id, "company_name": name}

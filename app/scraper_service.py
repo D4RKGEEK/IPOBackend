@@ -32,7 +32,7 @@ from app.schemas import IPORecord
 from app.status import compute_status, compute_dates, compute_documents
 from app.utils import normalize_company_name, parse_source_date, format_date
 from app.db_service import DatabaseService
-from app.pdf_utils import extract_document
+from app.notifications import notify
 
 logger = logging.getLogger(__name__)
 
@@ -108,10 +108,8 @@ class ScraperService:
         self,
         bse_sme: bool = True,
         include_pdf_urls: bool = True,
-        resolve_docs: bool = False,
-        resolve_doc_limit: int = 20,
         year: Optional[int] = None,
-        progress_callback: Optional[callable] = None,
+        progress_callback: Optional[Callable] = None,
     ) -> dict[str, Any]:
         """
         Scrape all sources, diff against DB, return a report.
@@ -119,6 +117,7 @@ class ScraperService:
         progress_callback: optional async callable(progress, label) for real-time updates.
         """
         start_time = time.monotonic()
+        started_at_utc = datetime.now(timezone.utc)
         self.logger.info("Starting full scrape of all sources...")
 
         results: list[IPORecord] = []
@@ -133,14 +132,23 @@ class ScraperService:
             sme_client = BSESmeClient(client) if bse_sme else None
 
             async def fetch_sebi() -> None:
+                # Paginate until empty or until we hit the configured cap.
+                # SEBI returns ~25 records per page; cap at 10 pages (~250 records)
+                # per doc type to avoid runaway requests on a stale endpoint.
+                MAX_PAGES = int(os.environ.get("SEBI_MAX_PAGES", "10"))
                 for doc_type in ("DRHP", "RHP"):
                     try:
-                        # Fetch first 5 pages of each type to get good coverage
-                        for page in range(1, 4):
+                        for page in range(1, MAX_PAGES + 1):
                             listing = await sebi_client.fetch_filings(
                                 page=page, document_type=doc_type,
                             )
-                            results.extend(listing["records"])
+                            records = listing.get("records") or []
+                            if not records:
+                                break
+                            results.extend(records)
+                            total_pages = listing.get("total_pages") or 0
+                            if total_pages and page >= total_pages:
+                                break
                     except Exception as exc:
                         errors.append({"source": f"sebi:{doc_type}", "error": str(exc)})
 
@@ -215,25 +223,54 @@ class ScraperService:
         if progress_callback:
             await progress_callback(0.5, f"{len(deduped)} unique IPOs — saving to DB...")
 
+        # Pre-fetch the set of normalized_names that are already 'listed' in DB —
+        # we skip these to save Firecrawl credits + scraper time. Once an IPO
+        # lists, its DRHP/RHP content is frozen; new price/GMP data comes via
+        # a separate webhook (not this scrape).
+        from app.db_models import IPOMaster, get_session as _get_session
+        with _get_session() as _s:
+            listed_set: set[str] = {
+                row[0] for row in _s.query(IPOMaster.normalized_name)
+                .filter(IPOMaster.status == "listed").all()
+            }
+        if listed_set:
+            self.logger.info("Skipping %d 'listed' IPOs (frozen post-listing).", len(listed_set))
+
         # Save to database
         saved = 0
+        skipped_listed = 0
         for i, record in enumerate(deduped):
             try:
                 ipo_data = _record_to_ipo_data(record, ["sebi", "bse", "nse", "bse_sme"])
-                
+
                 # Year filter: check after converting to ipo_data (reliable dates)
                 if year:
                     drhp = ipo_data.get("drhp_filed_date", "")
                     rhp = ipo_data.get("rhp_filed_date", "")
-                    if not ((drhp and str(drhp).startswith(str(year))) or 
+                    if not ((drhp and str(drhp).startswith(str(year))) or
                             (rhp and str(rhp).startswith(str(year)))):
                         continue
-                
+
+                # Skip already-listed IPOs (frozen post-listing).
+                if ipo_data.get("normalized_name") in listed_set:
+                    skipped_listed += 1
+                    continue
+
                 _, is_new = self.db.upsert_ipo(ipo_data)
                 if is_new:
                     new_count += 1
                     saved += 1
                     self.logger.info(f"  NEW IPO: {record.company_name} ({ipo_data['status']})")
+                    notify(
+                        f"📥 New IPO: <b>{record.company_name}</b> · {ipo_data['status']}",
+                        level="info",
+                        details={
+                            "company": record.company_name,
+                            "status": ipo_data.get("status"),
+                            "platform": ipo_data.get("platform"),
+                            "drhp_filed_date": ipo_data.get("drhp_filed_date"),
+                        },
+                    )
                 else:
                     saved += 1
                     # Check if status changed (we don't have the old status here,
@@ -247,23 +284,28 @@ class ScraperService:
                 self.logger.error(f"Failed to save {record.company_name}: {exc}")
                 errors.append({"source": "database", "error": f"{record.company_name}: {exc}"})
 
-        # Count actual status changes from this scrape
-        recent_changes = self.db.get_recent_status_changes(limit=100)
-        # Only count changes that happened within the last minute (this scrape run)
-        now = time.monotonic()
-        scrape_duration_ms = int((now - start_time) * 1000)
-        change_count = len([
-            c for c in recent_changes
-            if c.get("change_date")
-        ])
+        scrape_duration_ms = int((time.monotonic() - start_time) * 1000)
 
-        # Log the overall scrape result
+        # Count *real* status changes from THIS scrape run only
+        # (entries written after started_at). The previous implementation
+        # counted every row in the last 100 changes, regardless of when.
+        cutoff_iso = started_at_utc.isoformat()
+        recent_changes = self.db.get_recent_status_changes(limit=500)
+        change_count = sum(
+            1 for c in recent_changes
+            if (c.get("change_date") or "") >= cutoff_iso
+        )
+
         status = "success" if not errors else ("partial_success" if new_count > 0 else "error")
+        non_sebi_errors = sum(1 for e in errors if "sebi" not in e.get("source", ""))
         self.db.log_scrape(
             scraper_type="aggregator",
             action="full_scrape",
             status=status,
-            message=f"Scraped {len(deduped)} unique IPOs. New: {new_count}. Sources: {len([e for e in errors if 'sebi' not in e.get('source','')]) > 0} errors",
+            message=(
+                f"Scraped {len(deduped)} unique IPOs. New: {new_count}. "
+                f"Non-SEBI errors: {non_sebi_errors}"
+            ),
             error_details={"errors": errors, "total_raw": len(results), "deduped": len(deduped)} if errors else None,
             execution_time_ms=scrape_duration_ms,
             new_ipos_found=new_count,
@@ -272,13 +314,16 @@ class ScraperService:
 
         self.logger.info(f"Scrape complete in {scrape_duration_ms}ms. {new_count} new, {change_count} changes.")
 
-        # Optional: resolve ZIPs and extract text for unprocessed documents
-        doc_result = {}
-        if resolve_docs:
-            self.logger.info(f"Resolving documents (limit={resolve_doc_limit})...")
-            doc_result = await self.resolve_document_texts(limit=resolve_doc_limit)
+        # Summary ping (only fires if anything noteworthy happened)
+        if new_count or change_count or errors:
+            notify(
+                f"🔄 Scrape done · <b>{new_count}</b> new · <b>{change_count}</b> status changes · "
+                f"<b>{len(errors)}</b> errors · {scrape_duration_ms/1000:.1f}s",
+                level=("warn" if errors else "info"),
+                details=({"errors": [e for e in errors[:5]]} if errors else None),
+            )
 
-        result = {
+        return {
             "status": status,
             "total_raw": len(results),
             "total_unique": len(deduped),
@@ -286,108 +331,6 @@ class ScraperService:
             "status_changes_detected": change_count,
             "execution_time_ms": scrape_duration_ms,
             "errors": errors,
-        }
-        if doc_result:
-            result["documents_resolved"] = doc_result
-        
-        return result
-
-    async def resolve_document_texts(
-        self,
-        limit: int = 20,  # Process at most 20 per run to keep total time reasonable
-        max_workers: int = 3,  # Process up to 3 concurrently
-    ) -> dict[str, Any]:
-        """
-        After a scrape, resolve ZIP URLs to PDF text for unprocessed documents.
-        
-        Downloads ZIPs, extracts PDFs, extracts text, stores in DB.
-        Only processes documents not marked as processed yet.
-        Skips heavy files (>50MB), reports failures without crashing.
-        """
-        unprocessed = self.db.get_unprocessed_documents(limit=limit)
-        if not unprocessed:
-            return {"processed": 0, "failed": 0, "skipped": 0, "total_chars": 0}
-
-        self.logger.info(f"Resolving {len(unprocessed)} unprocessed documents...")
-        
-        processed = 0
-        failed = 0
-        skipped = 0
-        total_chars = 0
-
-        import httpx
-        semaphore = asyncio.Semaphore(max_workers)
-
-        async def resolve_one(ipo: dict) -> None:
-            nonlocal processed, failed, skipped, total_chars
-            ipo_id = ipo["id"]
-            name = ipo["company_name"]
-            docs = ipo.get("documents", {})
-            if not docs:
-                docs = {
-                    "drhp": ipo.get("drhp_url"),
-                    "rhp": ipo.get("rhp_url"),
-                    "final_prospectus": ipo.get("final_prospectus_url"),
-                }
-
-            async with semaphore:
-                for doc_type in ("drhp", "rhp", "final_prospectus"):
-                    url = docs.get(doc_type)
-                    if not url:
-                        continue
-                    
-                    # Skip already-processed
-                    processed_field = f"{doc_type}_processed"
-                    if ipo.get(processed_field, 0):
-                        continue
-
-                    # Check if already have text in DB
-                    existing = self.db.get_document_text(ipo_id, doc_type)
-                    if existing:
-                        self.logger.info(f"  [{name}] {doc_type} already has text ({len(existing):,} chars)")
-                        self.db.mark_document_processed(ipo_id, doc_type)
-                        processed += 1
-                        continue
-
-                    # Only extract if it's a ZIP or a PDF that hasn't been done
-                    if not url.lower().endswith((".pdf", ".zip")):
-                        skipped += 1
-                        continue
-
-                    try:
-                        async with httpx.AsyncClient(
-                            follow_redirects=True, timeout=60
-                        ) as client:
-                            result = await extract_document(url, client)
-                            text = result["text"] if result else None
-                        
-                        if text:
-                            self.db.save_document_text(ipo_id, doc_type, text, url)
-                            self.db.mark_document_processed(ipo_id, doc_type)
-                            processed += 1
-                            total_chars += len(text)
-                            self.logger.info(
-                                f"  ✓ {name} - {doc_type}: {len(text):,} chars"
-                            )
-                        else:
-                            self.logger.warning(f"  ✗ {name} - {doc_type}: no text extracted")
-                            failed += 1
-                    except Exception as e:
-                        self.logger.error(f"  ✗ {name} - {doc_type}: {e}")
-                        failed += 1
-
-        await asyncio.gather(*[resolve_one(ipo) for ipo in unprocessed])
-        
-        self.logger.info(
-            f"Document resolution: {processed} processed, {failed} failed, "
-            f"{skipped} skipped, {total_chars:,} total chars"
-        )
-        
-        return {
-            "processed": processed,
-            "failed": failed,
-            "skipped": skipped,
-            "total_chars": total_chars,
         }
 
 
@@ -402,8 +345,6 @@ def main():
     parser = argparse.ArgumentParser(description="IPO Scraper Service")
     parser.add_argument("--no-pdf-urls", action="store_true", help="Skip fetching PDF URLs from SEBI detail pages")
     parser.add_argument("--no-bse-sme", action="store_true", help="Skip BSE SME scraping")
-    parser.add_argument("--resolve-docs", action="store_true", help="Resolve ZIP URLs and extract PDF text after scraping")
-    parser.add_argument("--resolve-limit", type=int, default=50, help="Max documents to resolve (default: 50, max: 500)")
     parser.add_argument("--year", type=int, default=None, help="Only scrape IPOs from a specific year (e.g. 2026)")
     args = parser.parse_args()
 
@@ -411,8 +352,6 @@ def main():
     report = asyncio.run(service.run_full_scrape(
         bse_sme=not args.no_bse_sme,
         include_pdf_urls=not args.no_pdf_urls,
-        resolve_docs=args.resolve_docs,
-        resolve_doc_limit=args.resolve_limit,
         year=args.year,
     ))
 

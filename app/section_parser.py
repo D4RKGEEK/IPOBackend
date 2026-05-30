@@ -6,10 +6,12 @@ Section-based DeepSeek parser — 2 calls:
 Returns merged unified JSON. Missing fields = empty string.
 Saves raw prompt + raw response per call for debugging.
 """
-import json, logging, os, time
-from typing import Optional, Callable
+import json, logging, time
+from typing import Optional
 
 import httpx
+
+from app.config import require_deepseek, settings
 
 logger = logging.getLogger(__name__)
 
@@ -48,18 +50,11 @@ FINANCIAL_SECTION_NAMES = {"RESTATED_FINANCIAL_STATEMENTS","OTHER_FINANCIAL_INFO
 
 
 def _get_api_key() -> str:
-    key = os.environ.get("DEEPSEEK_API_KEY")
-    if key: return key
-    project_env = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
-    try:
-        with open(project_env) as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("DEEPSEEK_API_KEY="):
-                    val = line.split("=", 1)[1].strip().strip("\"'")
-                    if val and val != "***": return val
-    except: pass
-    raise RuntimeError("DEEPSEEK_API_KEY not found in .env")
+    return require_deepseek()
+
+
+def _get_model() -> str:
+    return settings.deepseek_model
 
 
 def _call_ds(text: str, company_name: str, fields: dict, doc_types: str, key: str) -> tuple[Optional[dict], Optional[dict], str, str]:
@@ -80,7 +75,7 @@ Text:
 {text[:60000]}
 """
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-    payload = {"model": "deepseek-v4-flash", "messages": [
+    payload = {"model": _get_model(), "messages": [
         {"role": "system", "content": "Extract structured IPO data. Return valid JSON. No nulls."},
         {"role": "user", "content": prompt},
     ], "temperature": 0.0, "max_tokens": 8000}

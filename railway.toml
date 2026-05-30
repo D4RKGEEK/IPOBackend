@@ -1,0 +1,27 @@
+# Railway deploy config (Nixpacks-free; Railway autodetects Dockerfile).
+#
+# First-time setup:
+#   1. railway login
+#   2. railway init                 # creates the project, links to GitHub
+#   3. railway variables --set "DATABASE_URL=postgresql://..."  \
+#                        --set "DEEPSEEK_API_KEY=sk-..."        \
+#                        --set "FIRECRAWL_API_KEY=fc-..."       \
+#                        --set "CF_ACCOUNT_ID=..." ...etc
+#   4. railway up                   # builds the Dockerfile and deploys
+#
+# Pricing reality check (as of 2026):
+#   • Hobby plan: $5/mo includes $5 of usage. An always-on Python container
+#     on the smallest size runs roughly $5-10/mo total.
+#   • Free trial: $5 one-time credit, no recurring free tier anymore.
+
+[build]
+  builder = "DOCKERFILE"
+  dockerfilePath = "Dockerfile"
+
+[deploy]
+  startCommand = "python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1 --proxy-headers --forwarded-allow-ips=*"
+  restartPolicyType = "ON_FAILURE"
+  restartPolicyMaxRetries = 5
+  healthcheckPath = "/health"
+  healthcheckTimeout = 10
+  numReplicas = 1

@@ -67,11 +67,29 @@ class IPOMaster(Base):
     # Confidence and metadata
     data_confidence: Mapped[float] = mapped_column(Float, default=0.0)
     source_count: Mapped[int] = mapped_column(Integer, default=0)  # How many sources found this IPO
-    
+
     # Lifecycle phase
     phase: Mapped[str] = mapped_column(String(20), default="discovered", index=True)
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    
+
+    # ─── Unified extracted data (Phase A/B — the contract shipped to Next.js) ────
+    # The single denormalized snapshot, fed by validate→unify after each parse.
+    unified_data: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
+    # Per-field {doc_type, parsed_at, schema_version} so we can answer "where did this come from?"
+    unified_provenance: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
+    # Bumped every time unified_data changes — Next.js can use this for cache busting.
+    unified_version: Mapped[int] = mapped_column(Integer, default=0)
+    unified_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # ─── Publish gating (Phase B — validation outcome) ──────────────────────────
+    # pending      — never parsed, nothing to publish yet
+    # published    — confidence high enough, webhook fired (or will fire)
+    # needs_review — validation flagged issues, do NOT publish
+    # rejected     — manual override (user said no)
+    publish_status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.0)
+    validation_issues: Mapped[Optional[list]] = mapped_column(SaJSON, nullable=True)
+
     # Full source data (JSON blobs for debugging)
     sebi_data: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
     bse_data: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
@@ -114,6 +132,11 @@ class IPOMaster(Base):
             "rhp_processed": bool(self.rhp_processed),
             "data_confidence": self.data_confidence,
             "source_count": self.source_count,
+            "publish_status": self.publish_status,
+            "confidence_score": self.confidence_score,
+            "validation_issues": self.validation_issues,
+            "unified_version": self.unified_version,
+            "unified_updated_at": self.unified_updated_at.isoformat() if self.unified_updated_at else None,
             "first_seen": self.first_seen.isoformat() if self.first_seen else None,
             "last_updated": self.last_updated.isoformat() if self.last_updated else None,
             "last_scraped": self.last_scraped.isoformat() if self.last_scraped else None,
@@ -215,12 +238,39 @@ class DocumentSection(Base):
     page_end: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     char_count: Mapped[int] = mapped_column(Integer, default=0)
     raw_md: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Content hash of raw_md. Compared against parsed_md_sha256 to gate
+    # Firecrawl re-calls when content hasn't changed.
+    raw_md_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    # Hash of the raw_md that produced the current parsed_data.
+    parsed_md_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     parsed_data: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
     parsed: Mapped[bool] = mapped_column(Integer, default=0)
     parsed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_updated: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc),
                                                     onupdate=lambda: datetime.now(timezone.utc))
+
+
+class BackgroundTask(Base):
+    """In-flight or completed background job (scrape, resolve, parse).
+
+    Persisted so client polls survive process restarts. Cleared by
+    task_manager when the cache exceeds max_tasks.
+    """
+    __tablename__ = "background_tasks"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(500), default="")
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    progress: Mapped[float] = mapped_column(Float, default=0.0)
+    progress_label: Mapped[str] = mapped_column(String(500), default="")
+    message: Mapped[str] = mapped_column(Text, default="")
+    result_json: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[float] = mapped_column(Float, index=True)
+    started_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    completed_at: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 # ─── Engine and Session ──────────────────────────────────────────
@@ -232,12 +282,46 @@ _engine = None
 _SessionLocal = None
 
 
+def _resolve_db_url(db_path: Optional[str] = None) -> str:
+    """Pick the DB connection URL.
+
+    Precedence:
+      1. Explicit db_path arg → sqlite:///<path>   (legacy hook for tests)
+      2. app.config.settings.db_url               (DATABASE_URL → Postgres, else SQLite)
+    """
+    if db_path:
+        return f"sqlite:///{db_path}"
+    try:
+        from app.config import settings
+        return settings.db_url
+    except Exception:
+        # Bootstrap path (config not importable yet, e.g. during alembic init).
+        return f"sqlite:///{_get_db_path()}"
+
+
+def _engine_kwargs(url: str) -> dict:
+    """Per-dialect engine tuning."""
+    if url.startswith("sqlite"):
+        return {"connect_args": {"check_same_thread": False}}
+    if url.startswith("postgresql"):
+        # `prepare_threshold=None` disables psycopg3's auto-prepared-statement
+        # cache. Required for Supabase's transaction-mode pooler (port 6543)
+        # which doesn't preserve session state between requests and chokes on
+        # re-used prepared statement names ("_pg3_0 already exists").
+        return {
+            "pool_pre_ping": True,
+            "pool_size": 5,
+            "max_overflow": 5,
+            "connect_args": {"prepare_threshold": None},
+        }
+    return {}
+
+
 def get_engine(db_path: Optional[str] = None):
     global _engine
     if _engine is None:
-        path = db_path or _get_db_path()
-        db_url = f"sqlite:///{path}"
-        _engine = create_engine(db_url, echo=False, connect_args={"check_same_thread": False})
+        url = _resolve_db_url(db_path)
+        _engine = create_engine(url, echo=False, **_engine_kwargs(url))
     return _engine
 
 

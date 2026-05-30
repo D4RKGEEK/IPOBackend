@@ -218,6 +218,20 @@ class DatabaseService:
             details=details or {},
         )
         session.add(record)
+        # Lifecycle ping (only on real transitions — skip on first-seen
+        # which has no old_status; that's already covered by the new-IPO ping)
+        if old_status and old_status != new_status:
+            try:
+                from app.notifications import notify
+                ipo = session.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
+                company = ipo.company_name if ipo else f"ipo#{ipo_id}"
+                notify(
+                    f"🔁 <b>{company}</b>: {old_status} → <b>{new_status}</b>",
+                    level="info",
+                    details={"ipo_id": ipo_id, "source": source, "triggered_by": triggered_by},
+                )
+            except Exception as e:
+                logger.debug("status-change notify skipped: %s", e)
         return record
 
     # ─── Status History ────────────────────────────────────
@@ -269,106 +283,6 @@ class DatabaseService:
                     "triggered_by": h.triggered_by,
                 })
             return results
-
-    # ─── Document Processing ─────────────────────────────
-
-    def get_unprocessed_documents(self, limit: int = 50) -> list[dict[str, Any]]:
-        """
-        Get IPOs with document URLs that haven't been processed yet.
-        Prioritizes ZIP URLs first, then recent PDFs.
-        """
-        from sqlalchemy import or_, case
-        with self._session() as session:
-            # Priority: ZIPs first, then recent PDFs
-            is_zip = case(
-                (IPOMaster.drhp_url.ilike('%.zip'), 1),
-                (IPOMaster.rhp_url.ilike('%.zip'), 1),
-                (IPOMaster.final_prospectus_url.ilike('%.zip'), 1),
-                else_=0
-            )
-            
-            rows = (
-                session.query(IPOMaster)
-                .filter(
-                    or_(
-                        IPOMaster.drhp_processed == 0,
-                        IPOMaster.rhp_processed == 0,
-                    ),
-                    or_(
-                        IPOMaster.drhp_url.isnot(None),
-                        IPOMaster.rhp_url.isnot(None),
-                        IPOMaster.final_prospectus_url.isnot(None),
-                    ),
-                )
-                .order_by(is_zip.desc(), IPOMaster.drhp_filed_date.desc().nullslast(), IPOMaster.id.desc())
-                .limit(limit)
-                .all()
-            )
-            return [row.to_dict() for row in rows]
-
-    def save_document_text(
-        self,
-        ipo_id: int,
-        document_type: str,  # 'drhp', 'rhp', 'final_prospectus'
-        text: str,
-        source_url: str,
-        confidence_score: float = 0.8,
-    ) -> int:
-        """Save extracted PDF text to ipo_parsed_data."""
-        from datetime import datetime, timezone
-        with self._session() as session:
-            record = IPOParsedData(
-                ipo_master_id=ipo_id,
-                data_type=f"raw_text_{document_type}",
-                extracted_data={
-                    "text": text,
-                    "source_url": source_url,
-                    "document_type": document_type,
-                    "char_count": len(text),
-                },
-                confidence_score=confidence_score,
-                extra={
-                    "extraction_method": "pymupdf",
-                    "version": "1.0",
-                },
-            )
-            session.add(record)
-            session.commit()
-            return record.id
-
-    def mark_document_processed(
-        self,
-        ipo_id: int,
-        document_type: str,  # 'drhp', 'rhp', 'final_prospectus'
-    ):
-        """Mark a document as processed (text extracted)."""
-        field = f"{document_type}_processed"
-        with self._session() as session:
-            ipo = session.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
-            if ipo and hasattr(ipo, field):
-                setattr(ipo, field, 1)
-                session.commit()
-
-    def get_document_text(
-        self,
-        ipo_id: int,
-        document_type: str,  # 'drhp', 'rhp', 'final_prospectus'
-    ) -> Optional[str]:
-        """Retrieve previously extracted text for a document."""
-        data_type = f"raw_text_{document_type}"
-        with self._session() as session:
-            record = (
-                session.query(IPOParsedData)
-                .filter(
-                    IPOParsedData.ipo_master_id == ipo_id,
-                    IPOParsedData.data_type == data_type,
-                )
-                .order_by(IPOParsedData.extraction_date.desc())
-                .first()
-            )
-            if record and record.extracted_data:
-                return record.extracted_data.get("text")
-            return None
 
     # ─── Parsed Data (Phase 2) ──────────────────────────
 
@@ -729,6 +643,8 @@ class DatabaseService:
     # ─── Sections (ToC-based) ─────────────────────────────
 
     def upsert_section(self, ipo_id, doc_type, section_name, page_start=None, page_end=None, raw_md=None):
+        import hashlib
+        raw_md_hash = hashlib.sha256(raw_md.encode("utf-8")).hexdigest() if raw_md else None
         with self._session() as session:
             existing = session.query(DocumentSection).filter(
                 DocumentSection.ipo_master_id == ipo_id,
@@ -737,12 +653,14 @@ class DatabaseService:
             if existing:
                 existing.page_start = page_start; existing.page_end = page_end
                 existing.raw_md = raw_md; existing.char_count = len(raw_md) if raw_md else 0
+                existing.raw_md_sha256 = raw_md_hash
                 existing.last_updated = datetime.now(timezone.utc)
                 doc_id = existing.id
             else:
                 record = DocumentSection(ipo_master_id=ipo_id, doc_type=doc_type,
                     section_name=section_name, page_start=page_start, page_end=page_end,
-                    raw_md=raw_md, char_count=len(raw_md) if raw_md else 0)
+                    raw_md=raw_md, char_count=len(raw_md) if raw_md else 0,
+                    raw_md_sha256=raw_md_hash)
                 session.add(record); session.flush(); doc_id = record.id
             session.commit(); return doc_id
 
@@ -754,7 +672,9 @@ class DatabaseService:
             return [{"id":r.id,"doc_type":r.doc_type,"section_name":r.section_name,
                      "page_start":r.page_start,"page_end":r.page_end,"char_count":r.char_count,
                      "parsed":bool(r.parsed),
-                     "parsed_at":r.parsed_at.isoformat() if r.parsed_at else None} for r in q.all()]
+                     "parsed_at":r.parsed_at.isoformat() if r.parsed_at else None,
+                     "raw_md_sha256": r.raw_md_sha256,
+                     "parsed_md_sha256": r.parsed_md_sha256} for r in q.all()]
 
     def get_section_raw_md(self, ipo_id, doc_type, section_name):
         with self._session() as session:
@@ -775,10 +695,18 @@ class DatabaseService:
             return None
 
     def mark_section_parsed(self, section_id, parsed_data):
+        """Persist parsed_data and snapshot the raw_md_sha256 → parsed_md_sha256.
+
+        Storing the hash at parse time lets the parser skip a re-call later if
+        raw_md is still byte-identical to what produced this parsed_data.
+        """
         with self._session() as session:
             r = session.query(DocumentSection).filter(DocumentSection.id == section_id).first()
             if not r: return False
-            r.parsed = True; r.parsed_data = parsed_data; r.parsed_at = datetime.now(timezone.utc)
+            r.parsed = True
+            r.parsed_data = parsed_data
+            r.parsed_at = datetime.now(timezone.utc)
+            r.parsed_md_sha256 = r.raw_md_sha256
             session.commit(); return True
 
     def delete_sections(self, ipo_id, doc_type=None):
