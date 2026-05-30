@@ -102,7 +102,12 @@ class SEBIClient:
                 return
             async with semaphore:
                 await self.limiter.wait()
-                detail = await self.fetch_detail_page(record.document_urls.detail_page)
+                try:
+                    detail = await self.fetch_detail_page(record.document_urls.detail_page)
+                except Exception:
+                    # Individual detail page fetch failure is non-fatal;
+                    # skip this record and continue with the rest.
+                    return
             pdf_url = detail.get("pdf_url")
             if not pdf_url:
                 return

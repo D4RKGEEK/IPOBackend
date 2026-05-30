@@ -206,67 +206,9 @@ async def ipo_delete(request: Request, ipo_id: int = Path(...)):
     return RedirectResponse("/dashboard/ipos", status_code=303)
 
 
-# ─── Phase Transitions ──────────────────────────────────────
+# ─── Phase Transitions / Parsed View ──────────────────────
 
-@app.post("/dashboard/ipos/{ipo_id}/phase/download")
-async def phase_download(request: Request, ipo_id: int = Path(...)):
-    """Move IPO to 'downloaded' phase (resolve documents)."""
-    ipo = db.get_ipo_by_id(ipo_id)
-    if not ipo:
-        return HTMLResponse("IPO not found", status_code=404)
-    
-    # Trigger resolve via API (async in background)
-    import httpx
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post(f"http://127.0.0.1:8001/api/ipos/{ipo_id}/resolve")
-        except:
-            pass
-    
-    # Update phase
-    with get_session() as s:
-        ipo = s.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
-        if ipo:
-            ipo.phase = "downloaded"
-            s.commit()
-    
-    return RedirectResponse(f"/dashboard/ipos/{ipo_id}", status_code=303)
-
-
-@app.post("/dashboard/ipos/{ipo_id}/phase/parse")
-async def phase_parse(request: Request, ipo_id: int = Path(...)):
-    """Move IPO to 'parsed' phase."""
-    # Trigger parse via API
-    import httpx
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post(f"http://127.0.0.1:8001/api/ipos/{ipo_id}/parse")
-        except:
-            pass
-    
-    with get_session() as s:
-        ipo = s.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
-        if ipo:
-            ipo.phase = "parsed"
-            s.commit()
-    
-    return RedirectResponse(f"/dashboard/ipos/{ipo_id}", status_code=303)
-
-
-@app.post("/dashboard/ipos/{ipo_id}/phase/publish")
-async def phase_publish(request: Request, ipo_id: int = Path(...)):
-    """Move IPO to 'published' phase (ready for frontend)."""
-    with get_session() as s:
-        ipo = s.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
-        if ipo:
-            ipo.phase = "published"
-            ipo.published_at = datetime.now(timezone.utc)
-            s.commit()
-    
-    return RedirectResponse(f"/dashboard/ipos/{ipo_id}", status_code=303)
-
-
-# ─── Scrape ─────────────────────────────────────────────────
+@app.get("/dashboard/ipos/{ipo_id}/delete")
 
 @app.get("/dashboard/scrape", response_class=HTMLResponse)
 async def scrape_page(request: Request):

@@ -1,142 +1,111 @@
 {% extends "base.html" %}
-{% block title %}{{ ipo.company_name }} - IPO Dashboard{% endblock %}
+{% block title %}{{ ipo.company_name }} - IPO Admin{% endblock %}
 {% block heading %}{{ ipo.company_name }}{% endblock %}
+{% block heading_extra %}
+  <span class="pill pill-{{ {'drhp_filed':'amber','sebi_approved':'blue','rhp_filed':'indigo','upcoming':'purple','open':'green','closed':'gray','listed':'green'}.get(ipo.status,'gray') }}">{{ ipo.status }}</span>
+  <span class="text-[11px] text-gray-400 mono">#{{ ipo.id }}</span>
+{% endblock %}
+{% block header_actions %}
+  <a href="/dashboard/ipos/{{ ipo.id }}/parsed" id="parsed-link" class="btn btn-secondary hidden">View all parsed data</a>
+  <button onclick="resolveIpo()" class="btn btn-secondary">Resolve docs</button>
+  <button onclick="parseIpo()" class="btn btn-brand">Parse via DeepSeek</button>
+  <button onclick="deleteIpo()" class="btn btn-ghost text-rose-600 hover:bg-rose-50">Delete</button>
+{% endblock %}
 {% block content %}
 
 <!-- Info Cards -->
 <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-    <div class="bg-white rounded-lg shadow p-4">
-        <p class="text-xs text-gray-500">Status</p>
-        <p class="text-lg font-semibold">{{ ipo.status }}</p>
-    </div>
-    <div class="bg-white rounded-lg shadow p-4">
-        <p class="text-xs text-gray-500">Phase</p>
-        <p class="text-lg font-semibold">{{ ipo.phase }}</p>
-    </div>
-    <div class="bg-white rounded-lg shadow p-4">
-        <p class="text-xs text-gray-500">Platform</p>
-        <p class="text-lg font-semibold">{{ ipo.platform or '-' }}</p>
-    </div>
-    <div class="bg-white rounded-lg shadow p-4">
-        <p class="text-xs text-gray-500">ID / CIN</p>
-        <p class="text-sm font-mono">{{ ipo.id }} / {{ ipo.cin or '-' }}</p>
-    </div>
+  <div class="card p-4"><p class="text-xs text-gray-500">Platform</p><p class="text-lg font-semibold">{{ ipo.platform or '-' }}</p></div>
+  <div class="card p-4"><p class="text-xs text-gray-500">Price Band</p><p class="text-lg font-semibold">{{ ipo.price_band or '-' }}</p></div>
+  <div class="card p-4"><p class="text-xs text-gray-500">DRHP</p><p class="text-lg font-semibold">{{ ipo.drhp_filed_date or '-' }}</p></div>
+  <div class="card p-4"><p class="text-xs text-gray-500">RHP</p><p class="text-lg font-semibold">{{ ipo.rhp_filed_date or '-' }}</p></div>
 </div>
 
-<!-- Phase Progress -->
-<div class="bg-white rounded-lg shadow p-4 mb-6">
-    <h3 class="font-semibold mb-4">Lifecycle</h3>
-    <div class="flex items-center">
-        {% set phases = ['discovered', 'downloaded', 'parsed', 'published'] %}
-        {% set current_idx = phases.index(ipo.phase) if ipo.phase in phases else 0 %}
-        {% for p in phases %}
-        <div class="flex-1 text-center">
-            <div class="w-10 h-10 mx-auto rounded-full flex items-center justify-center text-sm font-bold
-                {% if loop.index0 < current_idx %}bg-green-500 text-white
-                {% elif loop.index0 == current_idx %}bg-blue-500 text-white
-                {% else %}bg-gray-200 text-gray-500{% endif %}">
-                {{ ['🌐', '⬇️', '🔍', '🚀'][loop.index0] }}
-            </div>
-            <p class="text-xs mt-1 font-medium
-                {% if loop.index0 <= current_idx %}text-gray-800{% else %}text-gray-400{% endif %}">
-                {{ p|capitalize }}
-            </p>
+<!-- Documents -->
+<div class="card p-5 mb-6">
+  <h3 class="text-sm font-semibold tracking-tight mb-4">Documents</h3>
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+    {% for k, label, color in [('drhp','DRHP','amber'),('rhp','RHP','indigo'),('final_prospectus','Final Prospectus','teal')] %}
+      {% set url = ipo.documents[k] if ipo.documents else None %}
+      <div class="border border-gray-100 rounded-xl p-4 bg-gray-50/40">
+        <div class="flex items-center justify-between mb-2">
+          <span class="pill pill-{{ color }}">{{ label }}</span>
+          {% if url %}<span class="text-emerald-600 text-xs font-semibold">Available</span>
+          {% else %}<span class="text-gray-400 text-xs">Missing</span>{% endif %}
         </div>
-        {% if not loop.last %}
-        <div class="flex-1 h-0.5 {% if loop.index0 < current_idx %}bg-green-500{% else %}bg-gray-200{% endif %}"></div>
+        {% if url %}
+          <a href="{{ url }}" target="_blank" class="text-xs text-gray-600 mono break-all">{{ url[:70] }}…</a>
+        {% else %}
+          <div class="text-xs text-gray-400">No URL captured.</div>
         {% endif %}
-        {% endfor %}
-    </div>
-    <div class="flex gap-2 mt-4 justify-center">
-        <form action="/dashboard/ipos/{{ ipo.id }}/phase/download" method="post" style="display:inline">
-            <button type="submit" class="px-3 py-1.5 bg-purple-600 text-white rounded text-sm hover:bg-purple-700">⬇️ Download Docs</button>
-        </form>
-        <form action="/dashboard/ipos/{{ ipo.id }}/phase/parse" method="post" style="display:inline">
-            <button type="submit" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">🔍 Parse</button>
-        </form>
-        <form action="/dashboard/ipos/{{ ipo.id }}/phase/publish" method="post" style="display:inline">
-            <button type="submit" class="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">🚀 Publish</button>
-        </form>
-    </div>
-</div>
-
-<!-- Details -->
-<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-    <div class="bg-white rounded-lg shadow p-4">
-        <h3 class="font-semibold mb-3">Company Details</h3>
-        <dl class="space-y-2 text-sm">
-            <div class="flex justify-between"><dt class="text-gray-500">Name</dt><dd>{{ ipo.company_name }}</dd></div>
-            <div class="flex justify-between"><dt class="text-gray-500">CIN</dt><dd class="font-mono">{{ ipo.cin or '-' }}</dd></div>
-            <div class="flex justify-between"><dt class="text-gray-500">Website</dt><dd>{{ ipo.website or '-' }}</dd></div>
-            <div class="flex justify-between"><dt class="text-gray-500">Platform</dt><dd>{{ ipo.platform or '-' }}</dd></div>
-            <div class="flex justify-between"><dt class="text-gray-500">Price Band</dt><dd>{{ ipo.price_band or '-' }}</dd></div>
-        </dl>
-    </div>
-    <div class="bg-white rounded-lg shadow p-4">
-        <h3 class="font-semibold mb-3">Documents</h3>
-        <dl class="space-y-2 text-sm">
-            <div class="flex justify-between">
-                <dt class="text-gray-500">DRHP URL</dt>
-                <dd>{% if ipo.drhp_url %}<a href="{{ ipo.drhp_url }}" target="_blank" class="text-blue-600 hover:underline">View</a>{% else %}-{% endif %}</dd>
-            </div>
-            <div class="flex justify-between">
-                <dt class="text-gray-500">RHP URL</dt>
-                <dd>{% if ipo.rhp_url %}<a href="{{ ipo.rhp_url }}" target="_blank" class="text-blue-600 hover:underline">View</a>{% else %}-{% endif %}</dd>
-            </div>
-            <div class="flex justify-between">
-                <dt class="text-gray-500">DRHP Processed</dt>
-                <dd>{{ '✅' if ipo.drhp_processed else '❌' }}</dd>
-            </div>
-            <div class="flex justify-between">
-                <dt class="text-gray-500">RHP Processed</dt>
-                <dd>{{ '✅' if ipo.rhp_processed else '❌' }}</dd>
-            </div>
-            <div class="flex justify-between">
-                <dt class="text-gray-500">Published</dt>
-                <dd>{{ ipo.published_at[:19] if ipo.published_at else 'Not published' }}</dd>
-            </div>
-        </dl>
-    </div>
+      </div>
+    {% endfor %}
+  </div>
 </div>
 
 <!-- Dates -->
-<div class="bg-white rounded-lg shadow p-4 mb-6">
-    <h3 class="font-semibold mb-3">Key Dates</h3>
-    <div class="grid grid-cols-3 md:grid-cols-5 gap-4 text-sm">
-        <div><p class="text-gray-500">DRHP Filed</p><p class="font-medium">{{ ipo.drhp_filed_date or '-' }}</p></div>
-        <div><p class="text-gray-500">RHP Filed</p><p class="font-medium">{{ ipo.rhp_filed_date or '-' }}</p></div>
-        <div><p class="text-gray-500">Open</p><p class="font-medium">{{ ipo.open_date or '-' }}</p></div>
-        <div><p class="text-gray-500">Close</p><p class="font-medium">{{ ipo.close_date or '-' }}</p></div>
-        <div><p class="text-gray-500">First Seen</p><p class="font-medium">{{ ipo.first_seen[:10] if ipo.first_seen else '-' }}</p></div>
-    </div>
+<div class="card p-5 mb-6">
+  <h3 class="text-sm font-semibold tracking-tight mb-3">Key Dates</h3>
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+    <div><p class="text-gray-500 text-xs">DRHP Filed</p><p class="font-medium">{{ ipo.drhp_filed_date or '-' }}</p></div>
+    <div><p class="text-gray-500 text-xs">RHP Filed</p><p class="font-medium">{{ ipo.rhp_filed_date or '-' }}</p></div>
+    <div><p class="text-gray-500 text-xs">Open</p><p class="font-medium">{{ ipo.open_date or '-' }}</p></div>
+    <div><p class="text-gray-500 text-xs">Close</p><p class="font-medium">{{ ipo.close_date or '-' }}</p></div>
+    <div><p class="text-gray-500 text-xs">First Seen</p><p class="font-medium">{{ ipo.first_seen[:10] if ipo.first_seen else '-' }}</p></div>
+  </div>
 </div>
 
 <!-- Status History -->
-<div class="bg-white rounded-lg shadow p-4 mb-6">
-    <h3 class="font-semibold mb-3">Status History</h3>
-    <div class="space-y-2">
-        {% for h in status_history %}
-        <div class="flex items-center text-sm border-b border-gray-100 pb-2">
-            <span class="text-gray-400 w-32">{{ h.change_date[:19] }}</span>
-            <span class="text-gray-400 mx-2">{{ h.old_status or '—' }}</span>
-            <span class="mx-1">→</span>
-            <span class="font-semibold">{{ h.new_status }}</span>
-            <span class="text-xs text-gray-400 ml-2">({{ h.source }})</span>
-        </div>
-        {% else %}
-        <p class="text-sm text-gray-400">No status changes recorded.</p>
-        {% endfor %}
+<div class="card p-5 mb-6">
+  <h3 class="text-sm font-semibold tracking-tight mb-3">Status History</h3>
+  <div class="space-y-2">
+    {% for h in status_history %}
+    <div class="flex items-center text-sm border-b border-gray-100 pb-2">
+      <span class="text-gray-400 w-32 text-xs">{{ h.change_date[:19] }}</span>
+      <span class="text-gray-400 mx-2 text-xs">{{ h.old_status or '—' }}</span>
+      <span class="mx-1 text-gray-400">→</span>
+      <span class="font-semibold text-sm">{{ h.new_status }}</span>
+      <span class="text-xs text-gray-400 ml-2">({{ h.source }})</span>
     </div>
+    {% else %}
+    <p class="text-sm text-gray-400">No status changes recorded.</p>
+    {% endfor %}
+  </div>
 </div>
 
-<!-- Actions -->
-<div class="bg-white rounded-lg shadow p-4">
-    <h3 class="font-semibold mb-3">Actions</h3>
-    <div class="flex gap-3">
-        <a href="/dashboard/ipos/{{ ipo.id }}/edit" class="px-3 py-1.5 bg-yellow-500 text-white rounded text-sm hover:bg-yellow-600">✏️ Edit</a>
-        <a href="/dashboard/ipos/{{ ipo.id }}/delete" class="px-3 py-1.5 bg-red-600 text-white rounded text-sm hover:bg-red-700" onclick="return confirm('Delete this IPO?')">🗑️ Delete</a>
-        <a href="/dashboard/ipos" class="px-3 py-1.5 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300">← Back</a>
-    </div>
-</div>
+{% endblock %}
 
+{% block scripts %}
+<script>
+  // Check if parsed data exists (from sections data passed to template)
+  document.addEventListener('DOMContentLoaded', () => {
+    fetch('http://127.0.0.1:8001/api/ipos/{{ ipo.id }}/parsed-all', { method: 'HEAD' })
+      .then(r => { if (r.ok) document.getElementById('parsed-link').classList.remove('hidden'); })
+      .catch(() => {});
+  });
+
+  async function resolveIpo() {
+    if (!confirm('Resolve documents? Downloads PDFs and extracts sections.')) return;
+    const resp = await api('POST', `http://127.0.0.1:8001/api/ipos/{{ ipo.id }}/resolve`);
+    if (!resp || !resp.task_id) return;
+    pollTask(resp.task_id, null, (result) => {
+      if (result) { location.reload(); }
+    });
+  }
+
+  async function parseIpo() {
+    if (!confirm('Parse all sections via DeepSeek? This costs ~₹2.5 INR.')) return;
+    const resp = await api('POST', `http://127.0.0.1:8001/api/ipos/{{ ipo.id }}/parse-sections`);
+    if (!resp || !resp.task_id) return;
+    pollTask(resp.task_id, null, (result) => {
+      if (result) { location.reload(); }
+    });
+  }
+
+  async function deleteIpo() {
+    if (!confirm('Permanently delete this IPO?')) return;
+    const r = await api('DELETE', `http://127.0.0.1:8001/api/ipos/{{ ipo.id }}`);
+    if (r) { window.location.href = '/dashboard/ipos'; }
+  }
+</script>
 {% endblock %}
