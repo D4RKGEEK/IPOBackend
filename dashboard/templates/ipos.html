@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}IPOs · IPO Admin{% endblock %}
+{% block heading %}IPOs{% endblock %}
+
+{% block heading_extra %}
+  <span class="text-xs text-gray-500 mono">{{ "{:,}".format(total) }} matched</span>
+{% endblock %}
+
+{% block content %}
+
+{% set status_pills = {
+  'drhp_filed': ('amber', 'DRHP filed'),
+  'sebi_approved': ('blue', 'SEBI approved'),
+  'rhp_filed': ('indigo', 'RHP filed'),
+  'upcoming': ('purple', 'Upcoming'),
+  'open': ('green', 'Open'),
+  'closed': ('red', 'Closed'),
+  'listed': ('teal', 'Listed'),
+  'unknown': ('gray', 'Unknown'),
+  'announced': ('gray', 'Announced'),
+} %}
+
+{# Filter bar #}
+<form method="get" class="card p-4 mb-4">
+  <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+    <div class="md:col-span-4">
+      <label class="label">Search company</label>
+      <input type="text" name="search" value="{{ filters.search }}" placeholder="Rentomojo, Tata, Reliance…" class="input">
+    </div>
+    <div class="md:col-span-2">
+      <label class="label">Status</label>
+      <select name="status" class="input">
+        <option value="all" {% if filters.status == 'all' %}selected{% endif %}>All</option>
+        {% for k, label in [('drhp_filed','DRHP filed'),('sebi_approved','SEBI approved'),('rhp_filed','RHP filed'),('upcoming','Upcoming'),('open','Open'),('closed','Closed'),('listed','Listed'),('unknown','Unknown')] %}
+          <option value="{{ k }}" {% if filters.status == k %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="md:col-span-2">
+      <label class="label">Documents</label>
+      <select name="documents" class="input">
+        {% for k, label in [('all','All'),('any','Has any'),('drhp','Only DRHP'),('rhp','Only RHP'),('fp','Only FP'),('drhp,rhp','DRHP + RHP'),('drhp,fp','DRHP + FP')] %}
+          <option value="{{ k }}" {% if filters.documents == k %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="md:col-span-1">
+      <label class="label">Platform</label>
+      <select name="platform" class="input">
+        <option value="all" {% if filters.platform == 'all' %}selected{% endif %}>All</option>
+        <option value="MainBoard" {% if filters.platform == 'MainBoard' %}selected{% endif %}>MainBoard</option>
+        <option value="SME" {% if filters.platform == 'SME' %}selected{% endif %}>SME</option>
+      </select>
+    </div>
+    <div class="md:col-span-1">
+      <label class="label">Year</label>
+      <input type="number" name="year" value="{{ filters.year or '' }}" placeholder="2026" class="input" min="2020" max="2030">
+    </div>
+    <div class="md:col-span-1">
+      <label class="label">Per page</label>
+      <select name="per_page" class="input">
+        {% for n in [25, 50, 100] %}<option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="md:col-span-1 flex items-end">
+      <button type="submit" class="btn btn-primary w-full">Apply</button>
+    </div>
+  </div>
+  <div class="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
+    <div class="flex items-center gap-2 flex-wrap text-xs">
+      {% if filters.search %}<span class="pill pill-gray">"{{ filters.search }}"</span>{% endif %}
+      {% if filters.status != 'all' %}<span class="pill pill-blue">{{ filters.status }}</span>{% endif %}
+      {% if filters.documents != 'all' %}<span class="pill pill-amber">docs: {{ filters.documents }}</span>{% endif %}
+      {% if filters.platform != 'all' %}<span class="pill pill-purple">{{ filters.platform }}</span>{% endif %}
+      {% if filters.year %}<span class="pill pill-gray">y={{ filters.year }}</span>{% endif %}
+    </div>
+    <a href="/dashboard/ipos" class="text-xs font-medium text-gray-500 hover:text-gray-900">Reset filters</a>
+  </div>
+</form>
+
+{# Table #}
+<div class="card overflow-hidden">
+  <div class="overflow-x-auto">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Company</th>
+          <th>Status</th>
+          <th>Platform</th>
+          <th>Documents</th>
+          <th>Dates</th>
+          <th>Price band</th>
+          <th class="text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ipo in ipos %}
+          {% set meta = status_pills.get(ipo.status, ('gray', ipo.status)) %}
+          <tr>
+            <td>
+              <a href="/dashboard/ipos/{{ ipo.id }}" class="font-semibold text-gray-900 hover:text-brand-600 hover:underline">{{ ipo.company_name }}</a>
+              <div class="text-[11px] text-gray-400 mono">#{{ ipo.id }}</div>
+            </td>
+            <td><span class="pill pill-{{ meta[0] }}">{{ meta[1] }}</span></td>
+            <td class="text-xs text-gray-700">{{ ipo.platform or '—' }}</td>
+            <td>
+              <div class="flex gap-1">
+                {% set drhp = ipo.documents.drhp if ipo.documents else None %}
+                {% set rhp = ipo.documents.rhp if ipo.documents else None %}
+                {% set fp = ipo.documents.final_prospectus if ipo.documents else None %}
+                {% if drhp %}<a href="{{ drhp }}" target="_blank" class="pill pill-amber" title="DRHP">D</a>{% else %}<span class="pill pill-gray opacity-40">D</span>{% endif %}
+                {% if rhp %}<a href="{{ rhp }}" target="_blank" class="pill pill-indigo" title="RHP">R</a>{% else %}<span class="pill pill-gray opacity-40">R</span>{% endif %}
+                {% if fp %}<a href="{{ fp }}" target="_blank" class="pill pill-teal" title="Final Prospectus">F</a>{% else %}<span class="pill pill-gray opacity-40">F</span>{% endif %}
+              </div>
+            </td>
+            <td class="text-[11px] text-gray-500 mono">
+              {% if ipo.drhp_filed_date %}<div>D · {{ ipo.drhp_filed_date }}</div>{% endif %}
+              {% if ipo.rhp_filed_date %}<div>R · {{ ipo.rhp_filed_date }}</div>{% endif %}
+              {% if ipo.open_date %}<div class="text-emerald-600 font-semibold">O · {{ ipo.open_date }}</div>{% endif %}
+              {% if not ipo.drhp_filed_date and not ipo.rhp_filed_date and not ipo.open_date %}—{% endif %}
+            </td>
+            <td class="text-xs mono text-gray-700">{{ ipo.price_band or '—' }}</td>
+            <td class="text-right">
+              <a href="/dashboard/ipos/{{ ipo.id }}" class="btn btn-ghost btn-sm">View</a>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="text-center py-16 text-sm text-gray-400">No IPOs match these filters.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# Pagination #}
+<div class="mt-4 flex items-center justify-between">
+  <div class="text-xs text-gray-500 mono">
+    Page <span class="font-semibold text-gray-700">{{ page }}</span> / {{ total_pages }} · {{ "{:,}".format(total) }} total
+  </div>
+  {% set qs = "search=" ~ filters.search ~ "&status=" ~ filters.status ~ "&platform=" ~ filters.platform ~ "&documents=" ~ filters.documents ~ "&per_page=" ~ per_page %}
+  {% if filters.year %}{% set qs = qs ~ "&year=" ~ filters.year %}{% endif %}
+  <div class="flex items-center gap-1">
+    {% if page > 1 %}<a href="?page={{ page - 1 }}&{{ qs }}" class="btn btn-secondary btn-sm">← Prev</a>{% endif %}
+    {% if page < total_pages %}<a href="?page={{ page + 1 }}&{{ qs }}" class="btn btn-secondary btn-sm">Next →</a>{% endif %}
+  </div>
+</div>
+
+{% endblock %}

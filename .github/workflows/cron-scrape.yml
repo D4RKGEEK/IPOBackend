@@ -1,0 +1,66 @@
+# Cron via GitHub Actions — host-agnostic.
+#
+# Runs every 6 hours and POSTs /api/refresh on whichever host you deploy to
+# (Fly.io, Railway, VPS). The deployed API verifies the X-Internal-Key
+# header against INTERNAL_API_KEY, so the cron is authenticated.
+#
+# Why GitHub Actions and not the host's built-in cron:
+#   • Works the same on Fly / Railway / VPS — change platforms anytime.
+#   • Free for public repos; private repos get 2,000 free min/mo.
+#   • Easy to debug (workflow runs UI) and disable (Actions tab → Disable).
+#   • workflow_dispatch lets you manually trigger from the GH UI.
+#
+# Setup (one-time):
+#   GitHub repo → Settings → Secrets and variables → Actions → New repository secret
+#     IPO_API_URL          e.g. https://ipo-scraper.fly.dev   (no trailing slash)
+#     INTERNAL_API_KEY     same value as the API's INTERNAL_API_KEY env var
+
+name: Cron scrape
+
+on:
+  schedule:
+    # Every 6 hours at minute 0 (UTC). Adjust if you want IST-aligned slots.
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      year:
+        description: "Optional year filter (e.g. 2026). Blank = all years."
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cron-scrape
+  cancel-in-progress: false
+
+jobs:
+  trigger-scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: POST /api/refresh
+        env:
+          API_URL: ${{ secrets.IPO_API_URL }}
+          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+          YEAR: ${{ github.event.inputs.year }}
+        run: |
+          set -euo pipefail
+          : "${API_URL:?missing IPO_API_URL secret}"
+          : "${INTERNAL_API_KEY:?missing INTERNAL_API_KEY secret}"
+
+          url="${API_URL%/}/api/refresh"
+          if [ -n "${YEAR:-}" ]; then
+            url="${url}?year=${YEAR}"
+          fi
+
+          echo "POST → $url"
+          # -fS = fail on 4xx/5xx with stderr;  -m 300 = 5min request timeout
+          response=$(curl -fsS -m 300 -X POST \
+            -H "X-Internal-Key: ${INTERNAL_API_KEY}" \
+            -H "Content-Type: application/json" \
+            "$url")
+          echo "$response" | jq .   # pretty-print for the run log
+
+          # Quick health verify after kicking off
+          curl -fsS -m 10 "${API_URL%/}/health" | jq '{status, version, total: .checks.database.total_ipos}'

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}IPO Admin{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'ui-sans-serif', 'system-ui'],
+              mono: ['JetBrains Mono', 'ui-monospace'],
+            },
+            colors: {
+              brand: {
+                50: '#ecfdf5', 100: '#d1fae5', 200: '#a7f3d0',
+                300: '#6ee7b7', 400: '#34d399', 500: '#00d09c',
+                600: '#00b385', 700: '#047857', 800: '#065f46', 900: '#064e3b',
+              },
+            },
+            boxShadow: {
+              'card': '0 1px 2px 0 rgb(0 0 0 / 0.03), 0 1px 3px 0 rgb(0 0 0 / 0.04)',
+              'card-hover': '0 4px 12px -2px rgb(0 0 0 / 0.06), 0 2px 4px -2px rgb(0 0 0 / 0.04)',
+            },
+          }
+        }
+      }
+    </script>
+    <style type="text/tailwindcss">
+      @layer base {
+        body { @apply font-sans antialiased text-gray-900 bg-gray-50; font-feature-settings: "cv11", "ss01"; }
+        :focus-visible { @apply outline-none ring-2 ring-brand-500 ring-offset-2; }
+        ::-webkit-scrollbar { @apply w-1.5 h-1.5; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { @apply bg-gray-300 rounded-full; }
+        ::-webkit-scrollbar-thumb:hover { @apply bg-gray-400; }
+        [x-cloak] { display: none !important; }
+      }
+      @layer components {
+        .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+        .card { @apply bg-white border border-gray-100 rounded-2xl shadow-card; }
+        .card-hover { @apply transition-shadow hover:shadow-card-hover; }
+        .btn { @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-all whitespace-nowrap select-none; }
+        .btn:disabled { @apply opacity-40 cursor-not-allowed; }
+        .btn-primary { @apply bg-gray-900 text-white hover:bg-gray-800 active:bg-gray-950; }
+        .btn-brand { @apply bg-brand-500 text-white hover:bg-brand-600 active:bg-brand-700; }
+        .btn-secondary { @apply bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300; }
+        .btn-ghost { @apply text-gray-600 hover:text-gray-900 hover:bg-gray-100; }
+        .btn-danger { @apply bg-rose-500 text-white hover:bg-rose-600; }
+        .btn-sm { @apply px-2.5 py-1 text-xs; }
+        .input { @apply w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-xl placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-colors; }
+        .label { @apply block text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5; }
+        .pill { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold border; }
+        .pill-gray   { @apply bg-gray-50 text-gray-700 border-gray-200; }
+        .pill-amber  { @apply bg-amber-50 text-amber-700 border-amber-200; }
+        .pill-blue   { @apply bg-blue-50 text-blue-700 border-blue-200; }
+        .pill-indigo { @apply bg-indigo-50 text-indigo-700 border-indigo-200; }
+        .pill-purple { @apply bg-purple-50 text-purple-700 border-purple-200; }
+        .pill-green  { @apply bg-emerald-50 text-emerald-700 border-emerald-200; }
+        .pill-teal   { @apply bg-teal-50 text-teal-700 border-teal-200; }
+        .pill-red    { @apply bg-rose-50 text-rose-700 border-rose-200; }
+        .nav-link { @apply flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors; }
+        .nav-link.active { @apply bg-gray-900 text-white hover:bg-gray-900 hover:text-white; }
+        .nav-link.active .nav-count { @apply bg-white/15 text-white; }
+        .nav-count { @apply ml-auto px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500 text-[10px] font-semibold mono; }
+        .data-table { @apply w-full text-sm; }
+        .data-table thead { @apply bg-gray-50/80; }
+        .data-table th { @apply text-left text-[11px] uppercase tracking-wider text-gray-500 font-semibold px-4 py-2.5; }
+        .data-table td { @apply px-4 py-3 align-middle; }
+        .data-table tbody tr { @apply border-t border-gray-100 hover:bg-gray-50/60 transition-colors; }
+      }
+    </style>
+</head>
+<body class="h-full">
+
+  <div class="flex h-full">
+    <!-- Sidebar -->
+    <aside class="w-[240px] shrink-0 bg-white border-r border-gray-100 flex flex-col">
+      <div class="px-5 pt-5 pb-4">
+        <a href="/dashboard/" class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-gray-900 flex items-center justify-center">
+            <span class="text-white font-bold text-sm tracking-tight">IP</span>
+          </div>
+          <div>
+            <div class="font-bold text-[15px] tracking-tight leading-tight">IPO Admin</div>
+            <div class="text-[11px] text-gray-500 mono">v3.0</div>
+          </div>
+        </a>
+      </div>
+
+      <nav class="flex-1 px-3 py-2 space-y-0.5">
+        {% set path = request.url.path %}
+        <a href="/dashboard/" class="nav-link {% if path == '/dashboard/' %}active{% endif %}">
+          <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z"/></svg>
+          Overview
+        </a>
+        <a href="/dashboard/ipos" class="nav-link {% if path.startswith('/dashboard/ipos') %}active{% endif %}">
+          <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7.5h18M3 12h18m-6 4.5h6M3 16.5h6"/></svg>
+          IPOs
+          <span class="nav-count">{{ "{:,}".format(stats.total_ipos) }}</span>
+        </a>
+        <a href="/dashboard/scrape" class="nav-link {% if path.startswith('/dashboard/scrape') %}active{% endif %}">
+          <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.99v4.99"/></svg>
+          Scrape
+        </a>
+        <a href="/dashboard/admin" class="nav-link {% if path.startswith('/dashboard/admin') %}active{% endif %}">
+          <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"/></svg>
+          Admin
+        </a>
+      </nav>
+
+      <div class="p-3">
+        <div class="rounded-xl bg-gray-50 border border-gray-100 p-3">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Pipeline</span>
+            <span class="mono text-[11px] text-gray-700 font-semibold">{{ stats.total_with_drhp }}/{{ stats.total_ipos }}</span>
+          </div>
+          <div class="w-full h-1.5 bg-white rounded-full overflow-hidden">
+            <div class="h-full bg-brand-500 rounded-full" style="width: {{ (stats.total_with_drhp / stats.total_ipos * 100) if stats.total_ipos else 0 }}%"></div>
+          </div>
+          <div class="mt-1.5 text-[10px] text-gray-500">{{ "%.0f"|format((stats.total_with_drhp / stats.total_ipos * 100) if stats.total_ipos else 0) }}% have DRHP</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="flex-1 flex flex-col min-w-0">
+      <header class="h-16 shrink-0 bg-white border-b border-gray-100 px-8 flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3 min-w-0">
+          <h1 class="text-base font-semibold text-gray-900 tracking-tight truncate">{% block heading %}{% endblock %}</h1>
+          {% block heading_extra %}{% endblock %}
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          {% block header_actions %}{% endblock %}
+        </div>
+      </header>
+      <main class="flex-1 overflow-y-auto">
+        <div class="px-8 py-6 max-w-[1600px] mx-auto">
+          {% block content %}{% endblock %}
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container" class="fixed bottom-5 right-5 z-50 space-y-2 max-w-sm"></div>
+
+  <script>
+    function toast(msg, kind = 'success') {
+      const el = document.createElement('div');
+      const colors = { success: 'bg-emerald-500', error: 'bg-rose-500', info: 'bg-gray-900' };
+      el.className = `${colors[kind] || colors.info} text-white px-4 py-3 rounded-xl shadow-lg text-sm font-medium max-w-sm transform transition-all duration-200`;
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(8px)';
+      el.textContent = msg;
+      document.getElementById('toast-container').appendChild(el);
+      requestAnimationFrame(() => { el.style.opacity = '1'; el.style.transform = 'translateY(0)'; });
+      setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(8px)'; }, 4000);
+      setTimeout(() => el.remove(), 4300);
+    }
+
+    async function api(method, url, body) {
+      const opts = { method, headers: { 'Content-Type': 'application/json' } };
+      if (body) opts.body = JSON.stringify(body);
+      try {
+        const r = await fetch(url, opts);
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { toast(data.detail || `HTTP ${r.status}`, 'error'); return null; }
+        return data;
+      } catch (e) {
+        toast('Network error: ' + e.message, 'error');
+        return null;
+      }
+    }
+
+    // Poll a task until completed or failed
+    async function pollTask(taskId, onProgress, onDone) {
+      const apiBase = 'http://127.0.0.1:8001';
+      const maxAttempts = 600;
+      for (let i = 0; i < maxAttempts; i++) {
+        const task = await api('GET', `${apiBase}/api/tasks/${taskId}`);
+        if (!task) { onDone(null); return; }
+        if (onProgress) onProgress(task);
+        if (task.status === 'completed') { onDone(task.result); return; }
+        if (task.status === 'failed') { toast(`Task failed: ${task.error}`, 'error'); onDone(null); return; }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      toast('Task timed out after 10 minutes', 'error');
+      onDone(null);
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

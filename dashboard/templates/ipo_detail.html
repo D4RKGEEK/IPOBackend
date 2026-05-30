@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}{{ ipo.company_name }} - IPO Admin{% endblock %}
+{% block heading %}{{ ipo.company_name }}{% endblock %}
+{% block heading_extra %}
+  <span class="pill pill-{{ {'drhp_filed':'amber','sebi_approved':'blue','rhp_filed':'indigo','upcoming':'purple','open':'green','closed':'gray','listed':'green'}.get(ipo.status,'gray') }}">{{ ipo.status }}</span>
+  <span class="text-[11px] text-gray-400 mono">#{{ ipo.id }}</span>
+{% endblock %}
+{% block header_actions %}
+  <a href="/dashboard/ipos/{{ ipo.id }}/parsed" id="parsed-link" class="btn btn-secondary hidden">View all parsed data</a>
+  <button onclick="resolveIpo()" class="btn btn-secondary">Resolve docs</button>
+  <button onclick="parseIpo()" class="btn btn-brand">Parse via DeepSeek</button>
+  <button onclick="deleteIpo()" class="btn btn-ghost text-rose-600 hover:bg-rose-50">Delete</button>
+{% endblock %}
+{% block content %}
+
+<!-- Info Cards -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+  <div class="card p-4"><p class="text-xs text-gray-500">Platform</p><p class="text-lg font-semibold">{{ ipo.platform or '-' }}</p></div>
+  <div class="card p-4"><p class="text-xs text-gray-500">Price Band</p><p class="text-lg font-semibold">{{ ipo.price_band or '-' }}</p></div>
+  <div class="card p-4"><p class="text-xs text-gray-500">DRHP</p><p class="text-lg font-semibold">{{ ipo.drhp_filed_date or '-' }}</p></div>
+  <div class="card p-4"><p class="text-xs text-gray-500">RHP</p><p class="text-lg font-semibold">{{ ipo.rhp_filed_date or '-' }}</p></div>
+</div>
+
+<!-- Documents -->
+<div class="card p-5 mb-6">
+  <h3 class="text-sm font-semibold tracking-tight mb-4">Documents</h3>
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+    {% for k, label, color in [('drhp','DRHP','amber'),('rhp','RHP','indigo'),('final_prospectus','Final Prospectus','teal')] %}
+      {% set url = ipo.documents[k] if ipo.documents else None %}
+      <div class="border border-gray-100 rounded-xl p-4 bg-gray-50/40">
+        <div class="flex items-center justify-between mb-2">
+          <span class="pill pill-{{ color }}">{{ label }}</span>
+          {% if url %}<span class="text-emerald-600 text-xs font-semibold">Available</span>
+          {% else %}<span class="text-gray-400 text-xs">Missing</span>{% endif %}
+        </div>
+        {% if url %}
+          <a href="{{ url }}" target="_blank" class="text-xs text-gray-600 mono break-all">{{ url[:70] }}…</a>
+        {% else %}
+          <div class="text-xs text-gray-400">No URL captured.</div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Dates -->
+<div class="card p-5 mb-6">
+  <h3 class="text-sm font-semibold tracking-tight mb-3">Key Dates</h3>
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+    <div><p class="text-gray-500 text-xs">DRHP Filed</p><p class="font-medium">{{ ipo.drhp_filed_date or '-' }}</p></div>
+    <div><p class="text-gray-500 text-xs">RHP Filed</p><p class="font-medium">{{ ipo.rhp_filed_date or '-' }}</p></div>
+    <div><p class="text-gray-500 text-xs">Open</p><p class="font-medium">{{ ipo.open_date or '-' }}</p></div>
+    <div><p class="text-gray-500 text-xs">Close</p><p class="font-medium">{{ ipo.close_date or '-' }}</p></div>
+    <div><p class="text-gray-500 text-xs">First Seen</p><p class="font-medium">{{ ipo.first_seen[:10] if ipo.first_seen else '-' }}</p></div>
+  </div>
+</div>
+
+<!-- Status History -->
+<div class="card p-5 mb-6">
+  <h3 class="text-sm font-semibold tracking-tight mb-3">Status History</h3>
+  <div class="space-y-2">
+    {% for h in status_history %}
+    <div class="flex items-center text-sm border-b border-gray-100 pb-2">
+      <span class="text-gray-400 w-32 text-xs">{{ h.change_date[:19] }}</span>
+      <span class="text-gray-400 mx-2 text-xs">{{ h.old_status or '—' }}</span>
+      <span class="mx-1 text-gray-400">→</span>
+      <span class="font-semibold text-sm">{{ h.new_status }}</span>
+      <span class="text-xs text-gray-400 ml-2">({{ h.source }})</span>
+    </div>
+    {% else %}
+    <p class="text-sm text-gray-400">No status changes recorded.</p>
+    {% endfor %}
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Check if parsed data exists (from sections data passed to template)
+  document.addEventListener('DOMContentLoaded', () => {
+    fetch('http://127.0.0.1:8001/api/ipos/{{ ipo.id }}/parsed-all', { method: 'HEAD' })
+      .then(r => { if (r.ok) document.getElementById('parsed-link').classList.remove('hidden'); })
+      .catch(() => {});
+  });
+
+  async function resolveIpo() {
+    if (!confirm('Resolve documents? Downloads PDFs and extracts sections.')) return;
+    const resp = await api('POST', `http://127.0.0.1:8001/api/ipos/{{ ipo.id }}/resolve`);
+    if (!resp || !resp.task_id) return;
+    pollTask(resp.task_id, null, (result) => {
+      if (result) { location.reload(); }
+    });
+  }
+
+  async function parseIpo() {
+    if (!confirm('Parse all sections via DeepSeek? This costs ~₹2.5 INR.')) return;
+    const resp = await api('POST', `http://127.0.0.1:8001/api/ipos/{{ ipo.id }}/parse-sections`);
+    if (!resp || !resp.task_id) return;
+    pollTask(resp.task_id, null, (result) => {
+      if (result) { location.reload(); }
+    });
+  }
+
+  async function deleteIpo() {
+    if (!confirm('Permanently delete this IPO?')) return;
+    const r = await api('DELETE', `http://127.0.0.1:8001/api/ipos/{{ ipo.id }}`);
+    if (r) { window.location.href = '/dashboard/ipos'; }
+  }
+</script>
+{% endblock %}

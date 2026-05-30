@@ -1,0 +1,65 @@
+# Fly.io deploy config.
+#
+# First-time setup:
+#   1. Install: brew install flyctl  (or curl -L https://fly.io/install.sh | sh)
+#   2. fly auth login
+#   3. fly launch --no-deploy --name ipo-scraper          # creates the app
+#   4. fly secrets set DATABASE_URL="postgresql://..."    # set every secret from .env
+#                       DEEPSEEK_API_KEY="sk-..."
+#                       FIRECRAWL_API_KEY="fc-..."
+#                       CF_ACCOUNT_ID="..." R2_ACCESS_KEY_ID="..." \
+#                       R2_SECRET_ACCESS_KEY="..." R2_BUCKET="ipo" \
+#                       R2_PUBLIC_BASE="https://pub-...r2.dev" \
+#                       TELEGRAM_BOT_TOKEN="..." TELEGRAM_CHAT_ID="..." \
+#                       INTERNAL_API_KEY="$(openssl rand -hex 32)"
+#   5. fly deploy
+#
+# Region: sin = Singapore (low latency to Supabase ap-southeast-2).
+
+app = "ipo-scraper"
+primary_region = "sin"
+kill_signal = "SIGINT"
+kill_timeout = 30
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8001"
+  LOG_LEVEL = "INFO"
+  # MALLOC_ARENA_MAX is set in the Dockerfile so it survives any platform.
+
+# ─── HTTP service ──────────────────────────────────────────────────
+[http_service]
+  internal_port = 8001
+  force_https = true
+  # Keep always-on so Next.js never hits a cold start when revalidating.
+  # If you want to save ~$2/mo and don't mind 1-3s cold starts: flip
+  # auto_stop_machines to "stop" and min_machines_running to 0.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 25
+    hard_limit = 50
+
+  # Health check — Fly polls /health and restarts if it stays down.
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+    method = "GET"
+    path = "/health"
+
+# ─── VM size ───────────────────────────────────────────────────────
+# 512MB is enough for everyday traffic. PDF resolve peaks ~350MB; the buffer
+# protects against OOM. If you stay idle and watch the dashboard ↓ to a
+# 256MB machine to save another ~$2/mo.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

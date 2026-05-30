@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Scrape · IPO Admin{% endblock %}
+{% block heading %}Scrape control{% endblock %}
+
+{% block content %}
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+  <!-- Scrape trigger -->
+  <div class="card p-6 lg:col-span-1">
+    <h3 class="text-sm font-semibold tracking-tight mb-1">Run a scrape</h3>
+    <p class="text-xs text-gray-500 mb-5">Hits SEBI, BSE, NSE and BSE-SME concurrently. Runs in background — no blocking.</p>
+
+    <div class="space-y-4">
+      <div>
+        <label class="label">Year filter</label>
+        <input type="number" id="scrape-year" placeholder="e.g. 2026 (blank = all)" class="input" min="2020" max="2030">
+      </div>
+      <button onclick="runScrape()" id="scrape-btn" class="btn btn-brand w-full">Run scrape</button>
+      <div id="scrape-progress" class="hidden mt-3">
+        <div class="flex items-center gap-2 text-sm text-brand-600 mb-2">
+          <svg class="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" class="opacity-25"/><path d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span id="scrape-label">Starting...</span>
+        </div>
+        <div class="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+          <div id="scrape-bar" class="h-full bg-brand-500 rounded-full transition-all duration-500" style="width: 0%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scrape log -->
+  <div class="card lg:col-span-2 overflow-hidden">
+    <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+      <h3 class="text-sm font-semibold tracking-tight">Scraper run history</h3>
+      <span class="text-xs text-gray-400 mono">{{ recent_logs|length }} entries</span>
+    </div>
+    <div class="overflow-x-auto max-h-[640px]">
+      <table class="data-table">
+        <thead class="sticky top-0 z-10 bg-gray-50">
+          <tr>
+            <th>Scraper</th>
+            <th>Action</th>
+            <th>Status</th>
+            <th class="text-right">New</th>
+            <th class="text-right">Changes</th>
+            <th class="text-right">Duration</th>
+            <th class="text-right">When</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for l in recent_logs %}
+            <tr>
+              <td class="mono text-xs font-medium">{{ l.scraper_type }}</td>
+              <td class="text-xs">{{ l.action }}</td>
+              <td><span class="pill {% if l.status == 'success' %}pill-green{% elif l.status == 'error' %}pill-red{% else %}pill-gray{% endif %}">{{ l.status }}</span></td>
+              <td class="text-xs mono text-right">{{ l.new_ipos_found if l.new_ipos_found is not none else '—' }}</td>
+              <td class="text-xs mono text-right">{{ l.status_changes if l.status_changes is not none else '—' }}</td>
+              <td class="text-xs mono text-right">{{ "%.2f"|format((l.execution_time_ms or 0) / 1000) }}s</td>
+              <td class="text-[11px] text-gray-500 mono text-right">{{ l.created_at[:19].replace('T', ' ') }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="7" class="text-center py-12 text-sm text-gray-400">No scraper runs yet. Click <b>Run scrape</b> to start.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  async function runScrape() {
+    const btn = document.getElementById('scrape-btn');
+    const progress = document.getElementById('scrape-progress');
+    const bar = document.getElementById('scrape-bar');
+    const label = document.getElementById('scrape-label');
+    const year = document.getElementById('scrape-year').value;
+
+    btn.disabled = true;
+    btn.textContent = 'Starting...';
+    progress.classList.remove('hidden');
+
+    const qs = new URLSearchParams();
+    if (year) qs.set('year', year);
+    const resp = await api('POST', `http://127.0.0.1:8001/api/refresh?${qs}`);
+    if (!resp || !resp.task_id) { btn.disabled = false; btn.textContent = 'Run scrape'; return; }
+
+    pollTask(resp.task_id,
+      (task) => {
+        bar.style.width = (task.progress * 100) + '%';
+        label.textContent = task.progress_label || task.message || 'Running...';
+      },
+      (result) => {
+        btn.disabled = false;
+        btn.textContent = 'Run scrape';
+        progress.classList.add('hidden');
+        if (result) { location.reload(); }
+      }
+    );
+  }
+</script>
+{% endblock %}

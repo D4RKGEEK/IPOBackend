@@ -1,0 +1,392 @@
+{
+  "info": {
+    "name": "IPO Aggregation API v3",
+    "description": "IPO Aggregation Platform — scrape SEBI/BSE/NSE/SME, resolve PDFs into sections (R2-hosted), extract structured fields via Firecrawl or DeepSeek, validate, and ship via webhook to Next.js.\n\n## Base URLs\n- Local: `http://127.0.0.1:8001`\n- Production: set the `base_url` collection variable\n\n## Authentication\nMost reads are open. Write endpoints (`POST /api/refresh`, optionally others) check `INTERNAL_API_KEY` if set in the server env. When set, send it as either header:\n- `X-Internal-Key: <key>`\n- `Authorization: Bearer <key>`\n\nLeave it blank locally for open access.\n\n## Lifecycle\n1. **Scrape** → `POST /api/refresh` — fetches all sources, diffs against DB.\n2. **Resolve** → `POST /api/ipos/{id}/resolve` — downloads PDFs, splits into sections, uploads each section's markdown to R2.\n3. **Parse** → `POST /api/ipos/{id}/parse-firecrawl` (preferred) or `/parse-sections` (DeepSeek) — extracts structured fields per section.\n4. **Validate + Unify** runs automatically inside parse → sets `publish_status` on `ipo_master`.\n5. **Read** → `GET /api/ipos/{id}/unified` — the single contract you ship to Next.js.\n\nLong ops return `{task_id}` immediately. Poll `GET /api/tasks/{task_id}` for progress.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "ipo-scraper-v3"
+  },
+  "item": [
+    {
+      "name": "Health & System",
+      "item": [
+        {
+          "name": "Health (liveness)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] },
+            "description": "Cheap liveness check — DB connection + config visibility. No external API calls."
+          }
+        },
+        {
+          "name": "Health (deep — probes R2/Firecrawl/DeepSeek)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/health?deep=true", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }] },
+            "description": "Probes every external dependency: list R2 bucket, GET Firecrawl /team, GET DeepSeek /models. Use during a deploy to verify all secrets are correct."
+          }
+        },
+        {
+          "name": "Dashboard Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/dashboard/stats", "host": ["{{base_url}}"], "path": ["api", "dashboard", "stats"] }
+          }
+        },
+        {
+          "name": "Recent Scraper Logs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/dashboard/logs?limit=10", "host": ["{{base_url}}"], "path": ["api", "dashboard", "logs"], "query": [{ "key": "limit", "value": "10" }] }
+          }
+        },
+        {
+          "name": "Status Changes (audit)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/status-changes?limit=20", "host": ["{{base_url}}"], "path": ["api", "status-changes"], "query": [{ "key": "limit", "value": "20" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Scrape (background)",
+      "item": [
+        {
+          "name": "Trigger full scrape (returns task_id)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-Internal-Key", "value": "{{internal_api_key}}", "description": "Required only when INTERNAL_API_KEY is set on the server.", "disabled": false }
+            ],
+            "url": { "raw": "{{base_url}}/api/refresh?year=2026", "host": ["{{base_url}}"], "path": ["api", "refresh"], "query": [{ "key": "year", "value": "2026" }] },
+            "description": "Runs SEBI + BSE + NSE + SME concurrently. Skips IPOs already at `status=listed`. Returns task_id immediately — poll /api/tasks/{id} for progress."
+          }
+        },
+        {
+          "name": "Trigger scrape (no year filter)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Internal-Key", "value": "{{internal_api_key}}", "disabled": false }],
+            "url": { "raw": "{{base_url}}/api/refresh", "host": ["{{base_url}}"], "path": ["api", "refresh"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Background Tasks",
+      "item": [
+        {
+          "name": "List recent tasks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/tasks?limit=20", "host": ["{{base_url}}"], "path": ["api", "tasks"], "query": [{ "key": "limit", "value": "20" }] }
+          }
+        },
+        {
+          "name": "Poll a task",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/tasks/abc123def456", "host": ["{{base_url}}"], "path": ["api", "tasks", "abc123def456"] },
+            "description": "Replace abc123def456 with the task_id returned by /api/refresh, /api/ipos/{id}/resolve, or /parse-*. Status values: pending → running → completed | failed."
+          }
+        }
+      ]
+    },
+    {
+      "name": "IPO Listing & Search",
+      "item": [
+        {
+          "name": "All IPOs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos?per_page=25", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "per_page", "value": "25" }] }
+          }
+        },
+        {
+          "name": "DRHP only (no RHP, no FP)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos?documents=drhp&per_page=10", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "documents", "value": "drhp" }, { "key": "per_page", "value": "10" }] }
+          }
+        },
+        {
+          "name": "Has both DRHP and RHP",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos?documents=drhp,rhp", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "documents", "value": "drhp,rhp" }] }
+          }
+        },
+        {
+          "name": "Has any doc",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos?documents=any", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "documents", "value": "any" }] }
+          }
+        },
+        {
+          "name": "By status (listed)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos?status=listed", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "status", "value": "listed" }] }
+          }
+        },
+        {
+          "name": "By platform (MainBoard)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos?platform=MainBoard&per_page=10", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "platform", "value": "MainBoard" }, { "key": "per_page", "value": "10" }] }
+          }
+        },
+        {
+          "name": "By year",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos?year=2026", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "year", "value": "2026" }] }
+          }
+        },
+        {
+          "name": "Search by name",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos?search=rentomojo", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "search", "value": "rentomojo" }] }
+          }
+        },
+        {
+          "name": "Combo: Listed + Has FP only",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos?status=listed&documents=fp", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "status", "value": "listed" }, { "key": "documents", "value": "fp" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "IPO Detail & Unified",
+      "item": [
+        {
+          "name": "Get IPO by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos/88", "host": ["{{base_url}}"], "path": ["api", "ipos", "88"] }
+          }
+        },
+        {
+          "name": "🟢 Unified IPO (ship to Next.js)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos/88/unified", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "unified"] },
+            "description": "**This is the contract for your frontend.** Reads ipo_master.unified_data directly. Returns:\n- `publish_status`: published | needs_review | rejected | pending\n- `confidence_score`: 0.0–1.0\n- `data`: flat dict with all extracted fields\n- `provenance`: per-field {doc_type, parsed_at, section_name, schema_version}\n- `validation_issues`: array (only present when something failed format/cross-source check)\n\nOnly trust `data` when `publish_status == \"published\"`."
+          }
+        },
+        {
+          "name": "Documents overview (with R2 URLs)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos/88/documents", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents"] },
+            "description": "Per-doc-type summary: PDF URL, section count, each section's R2 URL."
+          }
+        },
+        {
+          "name": "Parsed-all (legacy — prefer /unified)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos/88/parsed-all", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "parsed-all"] },
+            "description": "Builds the merged JSON on-the-fly from document_sections.parsed_data. /unified is faster (reads the pre-computed snapshot) and includes publish_status. Kept for backwards compatibility."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Review Queue",
+      "item": [
+        {
+          "name": "IPOs needing review (low confidence)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/review-queue?publish_status=needs_review", "host": ["{{base_url}}"], "path": ["api", "review-queue"], "query": [{ "key": "publish_status", "value": "needs_review" }] }
+          }
+        },
+        {
+          "name": "Published IPOs (ready for Next.js)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/review-queue?publish_status=published", "host": ["{{base_url}}"], "path": ["api", "review-queue"], "query": [{ "key": "publish_status", "value": "published" }] }
+          }
+        },
+        {
+          "name": "Rejected IPOs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/review-queue?publish_status=rejected", "host": ["{{base_url}}"], "path": ["api", "review-queue"], "query": [{ "key": "publish_status", "value": "rejected" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Resolve (PDF → R2 sections, background)",
+      "item": [
+        {
+          "name": "Resolve all documents for IPO #88",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Internal-Key", "value": "{{internal_api_key}}", "disabled": false }],
+            "url": { "raw": "{{base_url}}/api/ipos/88/resolve", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "resolve"] },
+            "description": "Downloads DRHP/RHP/FP PDFs, parses ToC, splits into sections, uploads each section .md to R2 at `sections/{ipo_id}/{doc_type}/{section_name}.md`. Returns task_id."
+          }
+        },
+        {
+          "name": "List sections for DRHP",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos/88/documents/drhp/sections", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents", "drhp", "sections"] }
+          }
+        },
+        {
+          "name": "Get section raw markdown",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos/88/documents/drhp/sections/CAPITAL_STRUCTURE", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents", "drhp", "sections", "CAPITAL_STRUCTURE"] },
+            "description": "Returns first 500 chars by default. Add ?raw=true to get the full markdown."
+          }
+        },
+        {
+          "name": "Get section raw markdown (full)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos/88/documents/drhp/sections/CAPITAL_STRUCTURE?raw=true", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents", "drhp", "sections", "CAPITAL_STRUCTURE"], "query": [{ "key": "raw", "value": "true" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Parse (Firecrawl or DeepSeek, background)",
+      "item": [
+        {
+          "name": "🟢 Parse via Firecrawl (recommended)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Internal-Key", "value": "{{internal_api_key}}", "disabled": false }],
+            "url": { "raw": "{{base_url}}/api/ipos/88/parse-firecrawl", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "parse-firecrawl"] },
+            "description": "Groups 7 sections into 4 Firecrawl calls (~₹1.60 fresh). Content-hash gates skip already-parsed sections (re-runs cost ₹0). After parse, automatically runs validate + unify → sets publish_status on ipo_master."
+          }
+        },
+        {
+          "name": "Parse via Firecrawl — force re-parse",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Internal-Key", "value": "{{internal_api_key}}", "disabled": false }],
+            "url": { "raw": "{{base_url}}/api/ipos/88/parse-firecrawl?force=true", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "parse-firecrawl"], "query": [{ "key": "force", "value": "true" }] }
+          }
+        },
+        {
+          "name": "Parse via DeepSeek (legacy)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Internal-Key", "value": "{{internal_api_key}}", "disabled": false }],
+            "url": { "raw": "{{base_url}}/api/ipos/88/parse-sections", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "parse-sections"] },
+            "description": "Truncates each call to 60K chars, less accurate than Firecrawl per-section. Kept as fallback / A-B comparison."
+          }
+        },
+        {
+          "name": "View parsed data for one section",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/ipos/88/documents/drhp/sections/CAPITAL_STRUCTURE/parsed", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents", "drhp", "sections", "CAPITAL_STRUCTURE", "parsed"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications (internal)",
+      "item": [
+        {
+          "name": "Test Telegram + Gmail setup",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/internal/notify/test", "host": ["{{base_url}}"], "path": ["api", "internal", "notify", "test"] },
+            "description": "Synchronously fires a test message through every configured channel. Returns per-channel {enabled, ok, error}. Use after setting TELEGRAM_BOT_TOKEN / GMAIL_APP_PASSWORD in .env to verify they work."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Source-level Debug",
+      "item": [
+        {
+          "name": "SEBI DRHP listings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/sebi/filings?document_type=DRHP", "host": ["{{base_url}}"], "path": ["api", "sebi", "filings"], "query": [{ "key": "document_type", "value": "DRHP" }] }
+          }
+        },
+        {
+          "name": "BSE IPO list",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/bse/ipos", "host": ["{{base_url}}"], "path": ["api", "bse", "ipos"] }
+          }
+        },
+        {
+          "name": "NSE offer docs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/nse/offer-docs", "host": ["{{base_url}}"], "path": ["api", "nse", "offer-docs"] }
+          }
+        },
+        {
+          "name": "BSE SME DRHP list",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/api/bse-sme/drhp", "host": ["{{base_url}}"], "path": ["api", "bse-sme", "drhp"] }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8001",
+      "type": "string",
+      "description": "Override per-environment. Production: your Fly/Railway URL."
+    },
+    {
+      "key": "internal_api_key",
+      "value": "",
+      "type": "string",
+      "description": "Leave blank for local dev (INTERNAL_API_KEY not set on server). Set when calling production."
+    }
+  ]
+}
