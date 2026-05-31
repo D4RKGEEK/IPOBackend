@@ -463,10 +463,11 @@ async def parse_ipo_sections_firecrawl(ipo_id: int = Path(...), force: bool = Qu
 @app.post("/api/refresh", tags=["Aggregation"],
     summary="Trigger a full re-scrape in the background")
 async def refresh(
+    sources: str = Query("upstox", description="Sources: 'upstox' (default) or 'all' (Upstox + legacy SEBI/BSE/NSE)"),
     year: Optional[int] = Query(None, description="Limit to a specific filing year (e.g. 2026)."),
     _auth: None = Depends(_require_internal_key),
 ):
-    task_id = get_manager().create("scrape", f"Scrape IPOs (year={year or 'all'})")
+    task_id = get_manager().create("scrape", f"Scrape IPOs (sources={sources}, year={year or 'all'})")
 
     def _run(tid, mgr):
         import asyncio
@@ -476,7 +477,7 @@ async def refresh(
 
             mgr.update(tid, 0.05, "Starting scrape...")
             asyncio.run(scraper_service.run_full_scrape(
-                bse_sme=True, include_pdf_urls=True, year=year,
+                sources=sources, bse_sme=True, include_pdf_urls=True, year=year,
                 progress_callback=on_progress,
             ))
             mgr.update(tid, 1.0, "Complete")

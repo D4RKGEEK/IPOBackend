@@ -95,6 +95,7 @@ class IPOMaster(Base):
     bse_data: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
     nse_data: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
     bse_sme_data: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
+    upstox_data: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
     
     # Timestamps
     first_seen: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -140,6 +141,7 @@ class IPOMaster(Base):
             "first_seen": self.first_seen.isoformat() if self.first_seen else None,
             "last_updated": self.last_updated.isoformat() if self.last_updated else None,
             "last_scraped": self.last_scraped.isoformat() if self.last_scraped else None,
+            "upstox_data": self.upstox_data,
         }
 
 

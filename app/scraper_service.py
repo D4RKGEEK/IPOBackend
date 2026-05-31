@@ -24,9 +24,11 @@ from app.clients import (
     BSESmeClient,
     NSEClient,
     SEBIClient,
+    UpstoxClient,
     merge_bse_into_results,
     merge_bse_sme_docs,
     merge_nse_into_results,
+    merge_upstox_into_results,
 )
 from app.schemas import IPORecord
 from app.status import compute_status, compute_dates, compute_documents
@@ -48,6 +50,8 @@ def _source_count(record: IPORecord) -> int:
         count += 1
     if record.bse_sme_doc:
         count += 1
+    if record.upstox_data:
+        count += 1
     return count
 
 
@@ -62,6 +66,23 @@ def _record_to_ipo_data(record: IPORecord, sources_queried: list[str]) -> dict[s
     
     bse = record.bse_data
     nse = record.nse_data
+    upstox = record.upstox_data
+    
+    # Price band from Upstox (min-max) or BSE
+    price_band = None
+    if upstox and upstox.minimum_price is not None and upstox.maximum_price is not None:
+        price_band = f"{upstox.minimum_price}-{upstox.maximum_price}"
+    elif bse and bse.price_band:
+        price_band = bse.price_band
+    
+    # Platform from Upstox or BSE or NSE
+    platform = None
+    if upstox and upstox.issue_type:
+        platform = "SME" if upstox.issue_type == "sme" else "MainBoard" if upstox.issue_type == "regular" else None
+    elif bse and bse.platform:
+        platform = bse.platform
+    elif nse and nse.index:
+        platform = "SME" if nse.index == "sme" else "MainBoard"
     
     return {
         "normalized_name": normalize_company_name(record.company_name),
@@ -72,23 +93,20 @@ def _record_to_ipo_data(record: IPORecord, sources_queried: list[str]) -> dict[s
         "fp_filed_date": format_date(dates.get("fp_filed")),
         "open_date": format_date(dates.get("open")),
         "close_date": format_date(dates.get("close")),
-        "price_band": bse.price_band if bse else None,
-        "platform": (
-            bse.platform if bse else (
-                "SME" if nse and nse.index == "sme" else "MainBoard" if nse else None
-            )
-        ),
-        "issue_type": bse.issue_type if bse else None,
+        "price_band": price_band,
+        "platform": platform,
+        "issue_type": upstox.issue_type if upstox else (bse.issue_type if bse else None),
         "drhp_url": docs.get("drhp"),
         "rhp_url": docs.get("rhp"),
         "final_prospectus_url": docs.get("final_prospectus"),
         "abridged_prospectus_url": docs.get("abridged_prospectus"),
-        "data_confidence": min(1.0, _source_count(record) / 3.0),  # 3+ sources = high confidence
+        "data_confidence": min(1.0, _source_count(record) / 3.0),
         "source_count": _source_count(record),
         "sebi_data": record.document_urls.model_dump() if record.document_urls else None,
         "bse_data": bse.model_dump() if bse else None,
         "nse_data": nse.model_dump() if nse else None,
         "bse_sme_data": record.bse_sme_doc.model_dump() if record.bse_sme_doc else None,
+        "upstox_data": upstox.model_dump() if upstox else None,
         "_source": "aggregator",
         "_triggered_by": "cron",
     }
@@ -106,35 +124,72 @@ class ScraperService:
 
     async def run_full_scrape(
         self,
+        sources: str = "upstox",
         bse_sme: bool = True,
         include_pdf_urls: bool = True,
         year: Optional[int] = None,
         progress_callback: Optional[Callable] = None,
     ) -> dict[str, Any]:
         """
-        Scrape all sources, diff against DB, return a report.
+        Scrape IPO data from configured sources, diff against DB, return a report.
 
-        progress_callback: optional async callable(progress, label) for real-time updates.
+        Args:
+            sources: "upstox" (default, fast) or "all" (all sources including legacy).
+            bse_sme: Scrape BSE SME pages (only used when sources='all').
+            include_pdf_urls: Fetch PDF URLs from SEBI detail pages (only when sources='all').
+            year: Limit to a specific filing year.
+            progress_callback: optional async callable(progress, label) for real-time updates.
         """
+        from app.config import settings
         start_time = time.monotonic()
         started_at_utc = datetime.now(timezone.utc)
-        self.logger.info("Starting full scrape of all sources...")
+        self.logger.info("Starting scrape (sources=%s)...", sources)
 
         results: list[IPORecord] = []
         errors: list[dict[str, str]] = []
         new_count = 0
         change_count = 0
 
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            sebi_client = SEBIClient(client)
-            bse_client = BSEClient(client)
-            nse_client = NSEClient(client)
-            sme_client = BSESmeClient(client) if bse_sme else None
+        # Get Upstox token from config
+        upstox_token = settings.upstox_access_token.strip() if settings.upstox_access_token else ""
 
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+            # ─── Upstox (always runs — primary source) ───────
+            async def fetch_upstox() -> None:
+                if not upstox_token:
+                    errors.append({"source": "upstox", "error": "UPSTOX_ACCESS_TOKEN not set"})
+                    return
+                try:
+                    upstox_client = UpstoxClient(client, token=upstox_token)
+                    # Step 1: Get all slugs from list endpoint (all statuses, paginated)
+                    self.logger.info("Upstox: fetching all slugs...")
+                    slugs = await upstox_client.fetch_all_slugs()
+                    self.logger.info("Upstox: found %d slugs", len(slugs))
+
+                    if not slugs:
+                        return
+
+                    if progress_callback:
+                        await progress_callback(0.2, f"Upstox: {len(slugs)} IPOs — fetching details...")
+
+                    # Step 2: Fetch detail for each slug
+                    all_slugs = [s["id"] for s in slugs if s.get("id")]
+                    self.logger.info("Upstox: fetching details for %d IPOs...", len(all_slugs))
+                    details = await upstox_client.fetch_details_batch(all_slugs)
+                    self.logger.info("Upstox: got %d details", len(details))
+
+                    # Step 3: Merge into results
+                    merge_upstox_into_results(results, details)
+                    self.logger.info("Upstox: merged %d records into results", len(details))
+                except Exception as exc:
+                    self.logger.error("Upstox fetch failed: %s", exc)
+                    errors.append({"source": "upstox", "error": str(exc)})
+
+            # ─── Legacy sources (only when sources="all") ───
             async def fetch_sebi() -> None:
-                # Paginate until empty or until we hit the configured cap.
-                # SEBI returns ~25 records per page; cap at 10 pages (~250 records)
-                # per doc type to avoid runaway requests on a stale endpoint.
+                if sources != "all":
+                    return
+                sebi_client = SEBIClient(client)
                 MAX_PAGES = int(os.environ.get("SEBI_MAX_PAGES", "10"))
                 for doc_type in ("DRHP", "RHP"):
                     try:
@@ -152,11 +207,8 @@ class ScraperService:
                     except Exception as exc:
                         errors.append({"source": f"sebi:{doc_type}", "error": str(exc)})
 
-                if include_pdf_urls and results:
+                if sources == "all" and include_pdf_urls and results:
                     try:
-                        # Deduplicate SEBI records by (normalized_name, document_type) before
-                        # fetching detail pages — raw pagination returns the same company
-                        # across multiple pages (DRHP, UDRHP-1, corrigendum variants).
                         sebi_records = [r for r in results if r.source == "sebi"]
                         seen: set[tuple[str, str]] = set()
                         deduped: list[IPORecord] = []
@@ -175,18 +227,21 @@ class ScraperService:
                         errors.append({"source": "sebi:detail", "error": str(exc)})
 
             async def fetch_bse() -> None:
+                if sources != "all":
+                    return
                 try:
+                    bse_client = BSEClient(client)
                     bse_rows = await bse_client.fetch_ipos()
-                    # Filter to only IPO/FPO
                     bse_rows = [r for r in bse_rows if r.issue_type in ("IPO", "FPO")]
                     merge_bse_into_results(results, bse_rows)
                 except Exception as exc:
                     errors.append({"source": "bse", "error": str(exc)})
 
             async def fetch_bse_sme() -> None:
-                if sme_client is None:
+                if sources != "all" or not bse_sme:
                     return
                 try:
+                    sme_client = BSESmeClient(client)
                     drhp = await sme_client.fetch_drhp_list()
                     rhp = await sme_client.fetch_rhp_list()
                     merge_bse_sme_docs(results, drhp + rhp)
@@ -194,26 +249,36 @@ class ScraperService:
                     errors.append({"source": "bse:sme", "error": str(exc)})
 
             async def fetch_nse() -> None:
+                if sources != "all":
+                    return
                 try:
+                    nse_client = NSEClient(client)
                     nse_rows = await nse_client.fetch_all_docs()
                     merge_nse_into_results(results, nse_rows)
                 except Exception as exc:
                     errors.append({"source": "nse", "error": str(exc)})
 
-            await asyncio.gather(
-                fetch_sebi(),
-                fetch_bse(),
-                fetch_bse_sme(),
-                fetch_nse(),
-            )
+            # Run Upstox first (always), then legacy sources if requested
+            await fetch_upstox()
+            if sources == "all":
+                await asyncio.gather(
+                    fetch_sebi(),
+                    fetch_bse(),
+                    fetch_bse_sme(),
+                    fetch_nse(),
+                )
+
             if progress_callback:
-                await progress_callback(0.3, f"SEBI/BSE/NSE done — {len(results)} raw records")
+                await progress_callback(0.3, f"Scraping done — {len(results)} raw records")
 
         # Report raw counts
-        self.logger.info(f"Raw records collected: SEBI={len([r for r in results if r.source=='sebi'])}, "
-                         f"BSE={len([r for r in results if r.source=='bse'])}, "
-                         f"NSE={len([r for r in results if r.source=='nse'])}, "
-                         f"BSE_SME={len([r for r in results if r.source=='bse_sme'])}")
+        sebi_count = len([r for r in results if r.source == 'sebi'])
+        bse_count = len([r for r in results if r.source == 'bse'])
+        nse_count = len([r for r in results if r.source == 'nse'])
+        bse_sme_count = len([r for r in results if r.source == 'bse_sme'])
+        upstox_count = len([r for r in results if r.source == 'upstox'])
+        self.logger.info(f"Raw records: SEBI={sebi_count}, BSE={bse_count}, NSE={nse_count}, "
+                         f"BSE_SME={bse_sme_count}, Upstox={upstox_count}")
         if progress_callback:
             await progress_callback(0.4, f"Raw: {len(results)} records — merging & deduplicating...")
 
@@ -356,13 +421,16 @@ def main():
     
     import argparse
     parser = argparse.ArgumentParser(description="IPO Scraper Service")
-    parser.add_argument("--no-pdf-urls", action="store_true", help="Skip fetching PDF URLs from SEBI detail pages")
-    parser.add_argument("--no-bse-sme", action="store_true", help="Skip BSE SME scraping")
+    parser.add_argument("--sources", default="upstox", choices=["upstox", "all"],
+                        help="Sources to scrape: 'upstox' (default, fast) or 'all' (Upstox + legacy)")
+    parser.add_argument("--no-pdf-urls", action="store_true", help="Skip fetching PDF URLs from SEBI detail pages (only with --sources=all)")
+    parser.add_argument("--no-bse-sme", action="store_true", help="Skip BSE SME scraping (only with --sources=all)")
     parser.add_argument("--year", type=int, default=None, help="Only scrape IPOs from a specific year (e.g. 2026)")
     args = parser.parse_args()
 
     service = ScraperService()
     report = asyncio.run(service.run_full_scrape(
+        sources=args.sources,
         bse_sme=not args.no_bse_sme,
         include_pdf_urls=not args.no_pdf_urls,
         year=args.year,

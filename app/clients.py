@@ -11,6 +11,7 @@ from .schemas import (
     IPORecord,
     NSEData,
     NSEDocumentAttachment,
+    UpstoxData,
 )
 from .utils import (
     AsyncRateLimiter,
@@ -408,7 +409,145 @@ class BSESmeClient:
         return records
 
 
+class UpstoxClient:
+    """Fetch IPO data from Upstox v2 API.
+    
+    Two endpoints:
+      - GET /v2/ipos?status={s}&page_number={p}  → list (pagination)
+      - GET /v2/ipos/{id}                        → detail (DRHP/RHP URLs)
+    
+    Usage:
+        upstox = UpstoxClient(client, token="...")
+        slugs = await upstox.fetch_all_slugs()  # list, all statuses
+        detail = await upstox.fetch_detail("some-ipo-slug")  # detail
+    """
+
+    BASE_URL = "https://api.upstox.com/v2/ipos"
+    HEADERS_TEMPLATE = {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    }
+    ALL_STATUSES = ["upcoming", "open", "closed", "listed"]
+
+    def __init__(self, client: httpx.AsyncClient, token: str, delay_seconds: float = 0.3):
+        self.client = client
+        self.token = token
+        self.limiter = AsyncRateLimiter(delay_seconds)
+
+    def _headers(self) -> dict[str, str]:
+        return {**self.HEADERS_TEMPLATE, "Authorization": f"Bearer {self.token}"}
+
+    async def _fetch_page(self, status: str, page: int = 1, records: int = 30) -> dict:
+        """Fetch a single page of the list endpoint."""
+        await self.limiter.wait()
+        params = {"status": status, "page_number": page, "records": records}
+        resp = await self.client.get(
+            self.BASE_URL, headers=self._headers(), params=params, timeout=30
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def fetch_all_slugs(self) -> list[dict]:
+        """Iterate all statuses + pagination, return slugs (id, name, status).
+        
+        Returns list of dicts with at least {'id', 'name', 'status'}.
+        """
+        all_items: list[dict] = []
+        for status in self.ALL_STATUSES:
+            page = 1
+            while True:
+                try:
+                    data = await self._fetch_page(status, page=page)
+                except Exception:
+                    break  # non-fatal per status
+                
+                items = (data.get("data") or []) if isinstance(data, dict) else []
+                if not items:
+                    break
+                
+                for item in items:
+                    if isinstance(item, dict) and item.get("id"):
+                        all_items.append({
+                            "id": item["id"],
+                            "name": item.get("name", ""),
+                            "status": item.get("status", status),
+                            "symbol": item.get("symbol"),
+                            "issue_type": item.get("issue_type"),
+                        })
+                
+                # Check pagination
+                meta = data.get("meta_data") or {}
+                total_pages = meta.get("total_pages", 0) or 0
+                if page >= total_pages:
+                    break
+                page += 1
+        return all_items
+
+    async def fetch_detail(self, slug: str) -> Optional[dict]:
+        """Fetch full detail for a single IPO slug.
+        
+        Returns the 'data' dict from the response, or None on failure.
+        """
+        await self.limiter.wait()
+        try:
+            resp = await self.client.get(
+                f"{self.BASE_URL}/{slug}",
+                headers=self._headers(),
+                timeout=30,
+            )
+            resp.raise_for_status()
+            json_data = resp.json()
+            return json_data.get("data") if isinstance(json_data, dict) else None
+        except Exception:
+            return None
+
+    async def fetch_details_batch(self, slugs: list[str]) -> list[UpstoxData]:
+        """Fetch details for multiple slugs (concurrent, rate-limited)."""
+        from asyncio import Semaphore, gather
+        
+        sem = Semaphore(5)  # max 5 concurrent
+        results: list[UpstoxData] = []
+
+        async def _fetch_one(slug: str) -> Optional[UpstoxData]:
+            async with sem:
+                detail = await self.fetch_detail(slug)
+                if not detail:
+                    return None
+                # Build UpstoxData, only passing keys that exist in the response
+                clean = {k: detail.get(k) for k in UpstoxData.model_fields.keys() if k in detail}
+                # Ensure required fields have values
+                clean.setdefault("id", slug)
+                clean.setdefault("name", detail.get("name", slug))
+                clean.setdefault("status", detail.get("status", "unknown"))
+                return UpstoxData(**clean)
+
+        tasks = [_fetch_one(slug) for slug in slugs]
+        for coro in tasks:
+            result = await coro
+            if result:
+                results.append(result)
+        return results
+
+
 # ─── Merge Logic ──────────────────────────────────────────────
+
+
+def merge_upstox_into_results(results: list[IPORecord], upstox_rows: list[UpstoxData]) -> None:
+    """Merge Upstox detail data into the results list (by normalized name)."""
+    index = {normalize_company_name(r.company_name): r for r in results}
+    for row in upstox_rows:
+        key = normalize_company_name(row.name)
+        existing = index.get(key)
+        if existing:
+            existing.upstox_data = row
+        else:
+            record = IPORecord(
+                company_name=row.name,
+                source="upstox",
+                upstox_data=row,
+            )
+            results.append(record)
+            index[key] = record
 
 
 def merge_bse_into_results(results: list[IPORecord], bse_rows: list[BSEData]) -> None:

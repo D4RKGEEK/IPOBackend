@@ -130,6 +130,9 @@ class Settings(BaseSettings):
     bse_sme_delay_seconds: float = Field(default=0.5, ge=0)
     max_document_size_mb: int = Field(default=80, ge=1)
 
+    # ─── Upstox ──────────────────────────────────────────────────────
+    upstox_access_token: str = Field(default="", description="Upstox API Bearer token")
+
     # ─── SSL ─────────────────────────────────────────────────────────
     ssl_cert_file: Optional[str] = Field(default=None)
 
