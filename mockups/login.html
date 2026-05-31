@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Log in — IPORadar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="assets/theme.js"></script>
+  <script src="assets/data.js"></script>
+  <script src="assets/ui.js"></script>
+</head>
+<body class="min-h-full">
+  <div class="min-h-screen grid lg:grid-cols-2">
+    <!-- FORM -->
+    <div class="flex flex-col px-6 py-8 sm:px-12">
+      <a href="index.html" class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shadow-md">
+          <span class="text-white font-extrabold text-sm">IPO</span>
+        </div>
+        <span class="font-bold text-[15px]">IPO<span class="text-primary-600">Radar</span></span>
+      </a>
+
+      <div class="flex-1 flex items-center justify-center">
+        <div class="w-full max-w-sm py-12">
+          <h1 class="text-2xl font-bold">Welcome back</h1>
+          <p class="text-[13.5px] text-textMuted mt-2">Track IPOs. Get alerts. Never miss a listing.</p>
+
+          <button class="btn btn-secondary w-full mt-7">
+            <svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#fff" d="M21.35 11.1H12v2.9h5.35c-.25 1.36-1.02 2.5-2.16 3.27v2.7h3.5c2.05-1.9 3.2-4.7 3.2-8.02 0-.55-.05-1.08-.14-1.85Z" opacity=".95"/><path fill="#34a853" d="M12 22c2.7 0 4.96-.9 6.6-2.43l-3.5-2.7c-.97.65-2.2 1.04-3.1 1.04-2.38 0-4.4-1.6-5.13-3.77H3.3v2.37A10 10 0 0 0 12 22Z"/><path fill="#fbbc05" d="M6.87 14.14a6 6 0 0 1 0-3.84V7.93H3.3a10 10 0 0 0 0 9l3.57-2.79Z"/><path fill="#ea4335" d="M12 6.5c1.47 0 2.78.5 3.82 1.5l2.84-2.84A10 10 0 0 0 3.3 7.93l3.57 2.37C7.6 8.13 9.62 6.5 12 6.5Z"/></svg>
+            Continue with Google
+          </button>
+
+          <div class="flex items-center gap-3 my-6">
+            <div class="flex-1 h-px bg-border"></div><span class="text-[11px] text-slate-400 uppercase tracking-wider">or</span><div class="flex-1 h-px bg-border"></div>
+          </div>
+
+          <form class="space-y-4" onsubmit="event.preventDefault(); location.href='index.html'">
+            <div>
+              <label class="label">Email</label>
+              <input type="email" required class="input" placeholder="you@email.com">
+            </div>
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="label mb-0">Password</label>
+                <a href="#" class="text-[12px] text-primary-600 hover:text-primary-600">Forgot?</a>
+              </div>
+              <input type="password" required class="input" placeholder="••••••••">
+            </div>
+            <button class="btn btn-primary w-full">Log in</button>
+          </form>
+
+          <p class="text-[13px] text-textMuted text-center mt-6">New here? <a href="signup.html" class="text-primary-600 hover:text-primary-600 font-medium">Create an account</a></p>
+        </div>
+      </div>
+      <p class="text-[11px] text-slate-400">© 2026 IPORadar · Not investment advice.</p>
+    </div>
+
+    <!-- SIDE PANEL -->
+    <div class="hidden lg:flex relative overflow-hidden border-l border-border bg-surface items-center justify-center p-12">
+      <div class="absolute inset-0 grid-bg opacity-60"></div>
+      <div class="absolute -right-32 top-10 w-96 h-96 rounded-full bg-primary-50 blur-3xl"></div>
+      <div class="absolute -left-20 bottom-0 w-80 h-80 rounded-full bg-violet-50 blur-3xl"></div>
+      <div class="relative max-w-sm">
+        <span class="pill pill-green"><span class="pill-dot bg-primary-500 animate-pulse-ring"></span><span id="live-count" class="text-primary-600">live</span></span>
+        <h2 class="text-2xl font-bold mt-5 leading-snug">The fastest way to read an Indian IPO.</h2>
+        <p class="text-textSecondary mt-3 text-[14px]">Every figure traced to the source filing. Build a watchlist and we'll ping you the second status changes.</p>
+        <div id="side-cards" class="mt-7 space-y-3"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const D = window.IPO_DATA;
+    document.getElementById('live-count').textContent = `${D.stats.open} open now`;
+    const open = D.ipos.filter(i=>i.status==='open').slice(0,3);
+    document.getElementById('side-cards').innerHTML = open.map(i=>`
+      <div class="surface p-3.5 flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <div class="text-[13.5px] font-medium truncate">${i.company_name.replace(' Limited','')}</div>
+          <div class="text-[11px] text-textMuted mono mt-0.5">${UI.priceBand(i.price_band)||'TBA'} · closes ${UI.fmtDate(i.dates.close)}</div>
+        </div>
+        ${UI.statusPill(i.status)}
+      </div>`).join('');
+  </script>
+</body>
+</html>

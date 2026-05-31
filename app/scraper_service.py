@@ -154,10 +154,23 @@ class ScraperService:
 
                 if include_pdf_urls and results:
                     try:
+                        # Deduplicate SEBI records by (normalized_name, document_type) before
+                        # fetching detail pages — raw pagination returns the same company
+                        # across multiple pages (DRHP, UDRHP-1, corrigendum variants).
                         sebi_records = [r for r in results if r.source == "sebi"]
-                        if sebi_records:
-                            self.logger.info(f"Fetching PDF URLs for {len(sebi_records)} SEBI records...")
-                            await sebi_client.attach_pdf_urls(sebi_records)
+                        seen: set[tuple[str, str]] = set()
+                        deduped: list[IPORecord] = []
+                        for r in sebi_records:
+                            key = (normalize_company_name(r.company_name), r.document_type or "")
+                            if key not in seen:
+                                seen.add(key)
+                                deduped.append(r)
+                        if deduped:
+                            self.logger.info(
+                                f"Fetching PDF URLs for {len(deduped)} SEBI records "
+                                f"(deduped from {len(sebi_records)} raw)"
+                            )
+                            await sebi_client.attach_pdf_urls(deduped)
                     except Exception as exc:
                         errors.append({"source": "sebi:detail", "error": str(exc)})
 

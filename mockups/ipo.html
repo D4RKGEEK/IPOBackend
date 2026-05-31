@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title id="page-title">IPO detail — IPORadar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="assets/theme.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="assets/data.js"></script>
+  <script src="assets/ui.js"></script>
+</head>
+<body class="min-h-full pb-20 md:pb-0">
+  <header id="nav"></header>
+  <main id="app" class="container-app py-5 sm:py-8 pb-28 sm:pb-10"></main>
+  <footer id="footer"></footer>
+
+  <script>
+    UI.layout('all');
+    const F = UI; // alias
+
+    const id = new URLSearchParams(location.search).get('id') || 122;
+    const ipo = window.IPO_DATA.get(id);
+    const app = document.getElementById('app');
+
+    if (!ipo) {
+      app.innerHTML = `<div class="surface p-16 text-center max-w-lg mx-auto">
+        <h1 class="text-xl font-bold">IPO not found</h1>
+        <p class="text-textMuted mt-2 mb-5">We couldn't find that filing. It may have been removed.</p>
+        <a href="ipos.html" class="btn btn-primary mx-auto">Browse all IPOs</a></div>`;
+    } else {
+      document.getElementById('page-title').textContent =
+        `${ipo.company_name} IPO — ${F.priceBand(ipo.price_band)||'price TBA'} · IPORadar`;
+    }
+
+    /* ---------- formatters specific to detail ---------- */
+    const hasDetail = !!ipo && (ipo.financial_years || ipo.eps_basic);
+    function shares(n){ return n==null ? '—' : Number(n).toLocaleString('en-IN'); }
+    function amtFromLakhs(L, unit){ // unit decided per company
+      if (L==null) return '—';
+      return unit==='cr' ? '₹'+(L/100).toLocaleString('en-IN',{maximumFractionDigits:0})+' Cr'
+                         : '₹'+L.toLocaleString('en-IN',{maximumFractionDigits:0})+' L';
+    }
+    function strip(s){ return (s||'').replace(/^Rs\.?\s*/i,'₹'); }
+
+    /* ---------- render ---------- */
+    function render() {
+      const band = F.priceBand(ipo.price_band);
+      const min = F.minInvest(ipo);
+      const isListed = ipo.status === 'listed';
+      const upper = ipo.price_band ? Number(ipo.price_band.split('-')[1]) : null;
+
+      // tabs available depending on data
+      const tabs = [
+        {k:'overview', label:'Overview'},
+        {k:'financials', label:'Financials'},
+        {k:'issue', label:'Issue Details'},
+        {k:'promoters', label:'Promoters'},
+        {k:'risks', label:'Risks', beta:true},
+        {k:'documents', label:'Documents'},
+        {k:'gmp', label:'GMP & Subs', badge: ipo.gmp ? null : 'soon'},
+        {k:'allotment', label:'Allotment', badge: ipo.allotment ? null : 'soon'},
+      ];
+      const qTab = new URLSearchParams(location.search).get('tab');
+      const initialTab = tabs.some(t => t.k === qTab) ? qTab : 'overview';
+
+      app.innerHTML = `
+      <div x-data="{ tab:'${initialTab}', watched:false }">
+        <!-- breadcrumb -->
+        <nav class="flex items-center gap-1.5 text-[12px] text-textMuted mb-4">
+          <a href="index.html" class="hover:text-text">Home</a><span class="text-slate-400">/</span>
+          <a href="ipos.html" class="hover:text-text">IPOs</a><span class="text-slate-400">/</span>
+          <span class="text-textSecondary truncate">${ipo.company_name}</span>
+        </nav>
+
+        <!-- ABOVE THE FOLD -->
+        <div class="surface p-4 sm:p-6 relative overflow-hidden">
+          <div class="absolute -right-24 -top-24 w-72 h-72 rounded-full ${isListed?'bg-teal-500/10':'bg-primary-50'} blur-3xl pointer-events-none"></div>
+          <div class="relative">
+            <!-- header row: title + confidence -->
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 flex-wrap">
+                  ${F.platformBadge(ipo.platform)} ${F.statusPill(ipo.status)}
+                </div>
+                <h1 class="mt-1.5 text-[20px] sm:text-2xl font-bold leading-tight">${ipo.company_name}</h1>
+                <div class="mt-1 flex items-center gap-2 flex-wrap text-[11.5px] text-textMuted">
+                  ${ipo.sector ? `<span>${ipo.sector}</span>` : ''}
+                  ${ipo.cin ? `<span class="hidden sm:inline text-slate-300">·</span><span class="mono hidden sm:inline text-[10.5px]">CIN ${ipo.cin}</span>` : ''}
+                </div>
+              </div>
+              <div class="text-right shrink-0">
+                ${ipo.publish_status==='needs_review'
+                  ? `<span class="pill pill-amber text-[11px]">⚠ Review</span>`
+                  : ipo.confidence_score!=null
+                    ? `<div class="mono font-bold text-primary-600 text-[22px] leading-none">${(ipo.confidence_score*100).toFixed(0)}%</div><div class="text-[10px] text-textMuted mt-0.5">confidence</div>` : ''}
+                ${ipo.unified_updated_at ? `<div class="text-[10px] text-slate-400 mt-1">${F.relTime(ipo.unified_updated_at)}</div>`:''}
+              </div>
+            </div>
+
+            <!-- compact 2×2 data grid — always 2 cols on mobile -->
+            <div class="mt-4 data-grid">
+              ${dcell('Price band', band||'TBA', band?'text-[19px]':'text-slate-400 text-base')}
+              ${dcell('Min invest', min ? F.inr(min) : 'TBA', min?'text-[19px]':'text-slate-400')}
+              ${dcell('Lot size', ipo.lot_size ? ipo.lot_size+' sh' : 'TBA')}
+              ${dcell(isListed?'Listing gain':'Issue size', isListed && ipo.listing_gain_pct!=null
+                  ? `<span class="text-[17px] font-bold ${ipo.listing_gain_pct>=0?'text-success-600':'text-danger-600'}">${ipo.listing_gain_pct>=0?'▲+':'▼'}${ipo.listing_gain_pct}%</span>`
+                  : F.fmtCr(ipo.issue_size_cr))}
+            </div>
+            <!-- bid dates — 3 across always -->
+            <div class="mt-2 grid grid-cols-3 gap-px bg-border rounded-xl overflow-hidden border border-border">
+              ${cell('Bid opens', F.fmtDate(ipo.dates.open, true))}
+              ${cell('Closes', F.fmtDate(ipo.dates.close, true))}
+              ${cell('Listing', F.fmtDate(ipo.dates.listing, true))}
+            </div>
+
+            ${hasDetail ? `<div class="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div class="metric"><div class="metric-label">P / E</div><div class="metric-value">${ipo.pe_ratio||'TBA'}</div></div>
+              <div class="metric"><div class="metric-label">ROE</div><div class="metric-value text-success-600">${ipo.roe_percent||'TBA'}</div></div>
+              <div class="metric"><div class="metric-label">EPS</div><div class="metric-value">${strip(ipo.eps_basic)||'TBA'}</div></div>
+              <div class="metric"><div class="metric-label">NAV</div><div class="metric-value">${strip(ipo.nav_per_share)||'TBA'}</div></div>
+            </div>` : ''}
+
+            <!-- actions — desktop: inline row; mobile: hidden (sticky bar below) -->
+            <div class="mt-4 hidden sm:flex items-center gap-2.5">
+              <button @click="watched=!watched" class="btn tap" :class="watched?'btn-primary':'btn-secondary'">
+                <svg class="w-4 h-4" :fill="watched?'currentColor':'none'" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.5a.56.56 0 0 1 1.04 0l2.18 4.42 4.88.71c.47.07.66.65.32.98l-3.53 3.44.83 4.86c.08.47-.41.82-.83.6L12 16.6l-4.37 2.3c-.42.22-.91-.13-.83-.6l.83-4.86-3.53-3.44c-.34-.33-.15-.91.32-.98l4.88-.71L11.48 3.5Z"/></svg>
+                <span x-text="watched?'Watching':'Watch'"></span>
+              </button>
+              <button class="btn btn-secondary tap">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a24 24 0 0 0 5.454-1.31A8.97 8.97 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.97 8.97 0 0 1-2.312 6.022 24 24 0 0 0 5.455 1.31m5.714 0a24 24 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0"/></svg>
+                Alert me <span class="badge-mono ml-1">soon</span>
+              </button>
+              <button class="btn btn-dark ml-auto tap">Apply via broker <span class="badge-mono border-white/30 text-white/70 ml-1">soon</span></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- LIFECYCLE -->
+        <div class="surface px-4 py-4 mt-3 overflow-x-auto">
+          <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-3">Lifecycle</div>
+          <div class="overflow-x-auto pb-1">${F.lifecycle(ipo.status, ipo.dates)}</div>
+        </div>
+
+        <!-- TABS -->
+        <div class="sticky top-14 z-20 mt-4 -mx-5 sm:mx-0 bg-background/95 backdrop-blur-xl">
+          <div class="flex items-center gap-0 overflow-x-auto border-b border-border scroll-x" style="-webkit-overflow-scrolling:touch;scrollbar-width:none;" onscroll="this.style.mask=''" >
+            <div class="w-4 sm:w-0 shrink-0"></div>
+            ${tabs.map(t=>`<button @click="tab='${t.k}'" class="tab tap shrink-0" :class="tab==='${t.k}'&&'active'">
+              ${t.label}${t.badge?`<span class="badge-mono border-slate-300 text-slate-400 ml-1">${t.badge}</span>`:''}${t.beta?'<span class="badge-mono border-violet-200 text-violet-600 ml-1">beta</span>':''}
+            </button>`).join('')}
+          </div>
+        </div>
+
+        <!-- PANELS -->
+        <div class="mt-6">
+          <div x-show="tab==='overview'"   x-cloak>${tabOverview()}</div>
+          <div x-show="tab==='financials'" x-cloak>${tabFinancials()}</div>
+          <div x-show="tab==='issue'"      x-cloak>${tabIssue(upper)}</div>
+          <div x-show="tab==='promoters'"  x-cloak>${tabPromoters()}</div>
+          <div x-show="tab==='risks'"      x-cloak>${tabRisks()}</div>
+          <div x-show="tab==='documents'"  x-cloak>${tabDocuments()}</div>
+          <div x-show="tab==='gmp'"        x-cloak>${tabGmp()}</div>
+          <div x-show="tab==='allotment'"  x-cloak>${tabAllotment()}</div>
+        </div>
+      </div>
+
+      <!-- mobile sticky bottom bar (sm and below) -->
+      <div class="sm:hidden sticky-bar flex items-center gap-2.5">
+        <button @click="watched=!watched" class="btn tap flex-1" :class="watched?'btn-primary':'btn-secondary'">
+          <svg class="w-4 h-4 shrink-0" :fill="watched?'currentColor':'none'" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.5a.56.56 0 0 1 1.04 0l2.18 4.42 4.88.71c.47.07.66.65.32.98l-3.53 3.44.83 4.86c.08.47-.41.82-.83.6L12 16.6l-4.37 2.3c-.42.22-.91-.13-.83-.6l.83-4.86-3.53-3.44c-.34-.33-.15-.91.32-.98l4.88-.71L11.48 3.5Z"/></svg>
+          <span x-text="watched?'Watching':'Watch'"></span>
+        </button>
+        <button class="btn btn-dark tap flex-[2]">
+          Apply via broker
+          <span class="badge-mono border-white/30 text-white/70">soon</span>
+        </button>
+      </div>`;
+    }
+
+    function cell(label, val, cls){
+      return `<div class="bg-surface px-3 sm:px-4 py-3">
+        <div class="data-cell-label">${label}</div>
+        <div class="data-cell-value text-[14px] sm:text-[15px] ${cls||'text-text'}">${val}</div>
+      </div>`;
+    }
+    // 2-col data cell for the compact header grid
+    function dcell(label, val, valCls){
+      return `<div class="data-cell">
+        <div class="data-cell-label">${label}</div>
+        <div class="data-cell-value ${valCls||''}">${val}</div>
+      </div>`;
+    }
+    function notReady(msg){
+      return `<div class="surface p-12 text-center">
+        <div class="w-12 h-12 rounded-xl bg-slate-50 border border-border flex items-center justify-center mx-auto mb-3">
+          <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2m6-2a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z"/></svg>
+        </div>
+        <h3 class="font-semibold">${msg}</h3>
+        <p class="text-[13px] text-textMuted mt-1.5 mb-4">We parse the filing within 24 hours of publication. Watch this IPO to get notified.</p>
+        <a href="signup.html" class="btn btn-secondary btn-sm mx-auto">Notify me when ready</a>
+      </div>`;
+    }
+
+    /* ---------------- TAB: OVERVIEW ---------------- */
+    function tabOverview(){
+      if (!hasDetail) return notReady('Detailed analysis coming soon');
+      const metric = (l,v,c)=>`<div class="kpi"><div class="kpi-label">${l}</div><div class="kpi-value ${c||''}">${v||'TBA'}</div></div>`;
+      const debt = ipo.total_borrowings ? ipo.total_borrowings[ipo.total_borrowings.length-1] : null;
+      const unit = ipo.total_revenue && Math.max(...ipo.total_revenue)>=100000 ? 'cr':'l';
+      const objects = (ipo.fund_usage_breakdown||[]).map(o=>`
+        <div>
+          <div class="flex items-center justify-between text-[13px] mb-1">
+            <span class="text-textSecondary truncate pr-3">${o.use}</span>
+            <span class="mono text-text shrink-0">${strip(o.amount)}</span>
+          </div>
+          <div class="h-1.5 rounded-full bg-slate-100 overflow-hidden"><div class="h-full bg-primary-500 rounded-full" style="width:${o.pct||0}%"></div></div>
+        </div>`).join('');
+
+      return `<div class="grid lg:grid-cols-5 gap-6">
+        <div class="lg:col-span-2 space-y-6">
+          <div class="surface p-5">
+            <h3 class="font-semibold mb-3">Company snapshot</h3>
+            <dl class="space-y-2.5 text-[13px]">
+              ${row('Registered', ipo.registered_address)}
+              ${row('Phone', ipo.telephone)}
+              ${row('Email', ipo.email)}
+              ${row('Website', ipo.website)}
+            </dl>
+          </div>
+          <div class="surface p-5">
+            <h3 class="font-semibold mb-3">Intermediaries</h3>
+            <dl class="space-y-2.5 text-[13px]">
+              ${row('Lead manager', ipo.brlm_name)}
+              ${row('Registrar', ipo.registrar_name)}
+              ${row('Auditor', ipo.statutory_auditor)}
+              ${row('Legal advisor', ipo.legal_advisor)}
+            </dl>
+          </div>
+          <div class="surface p-5">
+            <h3 class="font-semibold mb-3">Management</h3>
+            <dl class="space-y-2.5 text-[13px]">
+              ${row('CFO', ipo.cfo_name)}
+              ${row('Company secretary', ipo.company_secretary_name)}
+            </dl>
+          </div>
+        </div>
+
+        <div class="lg:col-span-3 space-y-6">
+          <div class="surface p-5">
+            <h3 class="font-semibold mb-4">Key metrics</h3>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              ${metric('EPS (basic)', strip(ipo.eps_basic))}
+              ${metric('P/E ratio', ipo.pe_ratio)}
+              ${metric('ROE', ipo.roe_percent, 'text-primary-600')}
+              ${metric('ROCE', ipo.roce_percent, 'text-primary-600')}
+              ${metric('NAV / share', strip(ipo.nav_per_share))}
+              ${metric('P/B', ipo.price_to_book_value)}
+              ${metric('Rev. growth', ipo.revenue_growth_percent, 'text-primary-600')}
+              ${metric('PAT margin', ipo.pat_margin_percent)}
+              ${metric('Latest debt', debt!=null?amtFromLakhs(debt,unit):'TBA')}
+            </div>
+          </div>
+          <div class="surface p-5">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-semibold">Objects of the issue</h3>
+              ${ipo.total_project_cost?`<span class="text-[12px] text-textMuted">Total ${strip(ipo.total_project_cost)}</span>`:''}
+            </div>
+            <div class="space-y-4">${objects||'<p class="text-textMuted text-[13px]">Not disclosed.</p>'}</div>
+          </div>
+        </div>
+      </div>`;
+    }
+    function row(k,v){ return `<div class="flex gap-3"><dt class="w-32 shrink-0 text-textMuted">${k}</dt><dd class="text-text break-words">${v||'—'}</dd></div>`; }
+
+    /* ---------------- TAB: FINANCIALS ---------------- */
+    function tabFinancials(){
+      if (!ipo.financial_years) return notReady('Financials coming soon');
+      const yrs = ipo.financial_years;
+      const unit = Math.max(...ipo.total_revenue) >= 100000 ? 'cr' : 'l';
+      const rev = ipo.total_revenue, pat = ipo.profit_after_tax;
+      const maxRev = Math.max(...rev);
+      const scale = unit === 'cr' ? 100 : 1;
+      const compact = n => n >= 1000 ? (n/1000).toFixed(1).replace(/\.0$/,'') + 'k' : Math.round(n).toLocaleString('en-IN');
+      const niceCeil = v => { const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v/p; const s = n<=1?1:n<=2?2:n<=2.5?2.5:n<=5?5:10; return s*p; };
+      const axisMax = niceCeil(maxRev * 1.12);
+      const grid = [axisMax, axisMax*2/3, axisMax/3, 0];
+      const bar = (v, cls, txt) => `<div class="relative w-8 sm:w-9 rounded-t-md ${cls} transition-all" style="height:${(v/axisMax*100).toFixed(1)}%">
+            <span class="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] mono font-semibold ${txt} whitespace-nowrap">${compact(v/scale)}</span></div>`;
+
+      const frow = (label, arr, hl) => `<tr>
+        <td class="text-textMuted">${label}</td>
+        ${arr.map(v=>`<td class="text-right mono ${hl||'text-text'}">${amtFromLakhs(v,unit)}</td>`).join('')}
+      </tr>`;
+
+      return `<div class="grid lg:grid-cols-5 gap-6">
+        <div class="lg:col-span-3 surface p-5">
+          <div class="flex items-start justify-between mb-5">
+            <div>
+              <h3 class="font-semibold">Revenue vs PAT</h3>
+              <p class="text-[12px] text-textMuted mt-0.5">3-year restated · ${unit==='cr'?'₹ Crore':'₹ Lakh'}</p>
+            </div>
+            <div class="flex items-center gap-3 text-[11.5px] text-textSecondary">
+              <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-primary-500"></span>Revenue</span>
+              <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-violet-500"></span>PAT</span>
+            </div>
+          </div>
+          <div class="flex gap-2.5" style="height:190px">
+            <div class="flex flex-col justify-between w-9 shrink-0 text-right">
+              ${grid.map(g=>`<span class="text-[9px] text-slate-400 mono leading-none">${compact(g/scale)}</span>`).join('')}
+            </div>
+            <div class="relative flex-1">
+              ${grid.map((g,idx)=>`<div class="absolute left-0 right-0 ${idx===grid.length-1?'border-t border-border':'border-t border-dashed border-borderSoft'}" style="top:${(idx/(grid.length-1)*100).toFixed(1)}%"></div>`).join('')}
+              <div class="absolute inset-0 flex items-end justify-around gap-4 px-1">
+                ${yrs.map((y,i)=>`<div class="flex-1 max-w-[110px] h-full flex items-end justify-center gap-2">
+                    ${bar(rev[i],'bg-gradient-to-t from-primary-600 to-primary-400','text-primary-700')}
+                    ${bar(pat[i],'bg-gradient-to-t from-violet-500 to-violet-400','text-violet-700')}
+                  </div>`).join('')}
+              </div>
+            </div>
+          </div>
+          <div class="flex gap-2.5 mt-2">
+            <div class="w-9 shrink-0"></div>
+            <div class="flex-1 flex justify-around px-1">${yrs.map(y=>`<span class="flex-1 max-w-[110px] text-center text-[11px] text-textMuted mono">${y}</span>`).join('')}</div>
+          </div>
+        </div>
+        <div class="lg:col-span-2 space-y-3">
+          <div class="surface p-5">
+            <h3 class="font-semibold mb-3">Margins & growth</h3>
+            <div class="grid grid-cols-3 gap-3">
+              <div class="kpi"><div class="kpi-label">Rev growth</div><div class="kpi-value text-primary-600">${ipo.revenue_growth_percent||'—'}</div></div>
+              <div class="kpi"><div class="kpi-label">EBITDA mgn</div><div class="kpi-value">${ipo.ebitda_margin_percent||'—'}</div></div>
+              <div class="kpi"><div class="kpi-label">PAT mgn</div><div class="kpi-value">${ipo.pat_margin_percent||'—'}</div></div>
+            </div>
+          </div>
+          <div class="surface p-5">
+            <h3 class="font-semibold mb-2">Borrowings breakdown</h3>
+            <p class="text-[12.5px] text-textSecondary leading-relaxed">${ipo.borrowings_breakdown||'—'}</p>
+            ${ipo.contingent_liabilities?`<p class="text-[12px] text-textMuted mt-3">Contingent liabilities: <span class="text-text">${strip(ipo.contingent_liabilities)}</span></p>`:''}
+          </div>
+        </div>
+
+        <div class="lg:col-span-5 surface p-5 overflow-x-auto">
+          <h3 class="font-semibold mb-4">Restated financials</h3>
+          <table class="dt min-w-[520px]">
+            <thead><tr><th>₹ figures</th>${yrs.map(y=>`<th class="text-right">${y}</th>`).join('')}</tr></thead>
+            <tbody>
+              ${frow('Total revenue', ipo.total_revenue)}
+              ${frow('Total income', ipo.total_income)}
+              ${frow('EBITDA', ipo.ebitda)}
+              ${frow('Profit after tax', ipo.profit_after_tax, 'text-primary-600')}
+              ${frow('Net worth', ipo.net_worth)}
+              ${frow('Total assets', ipo.total_assets)}
+              ${frow('Total borrowings', ipo.total_borrowings, 'text-amber-700')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+    }
+
+    /* ---------------- TAB: ISSUE DETAILS ---------------- */
+    function tabIssue(upper){
+      if (!hasDetail) return notReady('Issue details coming soon');
+      const freshVal = ipo.fresh_issue_shares && upper ? ipo.fresh_issue_shares*upper : null;
+      const ofsVal = ipo.offer_for_sale_shares && upper ? ipo.offer_for_sale_shares*upper : null;
+      const toCr = v => v==null?'—':'₹'+(v/1e7).toLocaleString('en-IN',{maximumFractionDigits:1})+' Cr';
+      // allocation donut
+      const q=(ipo.qib_shares||0)*100, n=(ipo.nii_shares||0)*100, r=(ipo.retail_shares||0)*100;
+      const d1=q*3.6, d2=(q+n)*3.6;
+      const donut = `conic-gradient(#4F46E5 0 ${d1}deg, #8B5CF6 ${d1}deg ${d2}deg, #F59E0B ${d2}deg 360deg)`;
+
+      return `<div class="grid lg:grid-cols-2 gap-6">
+        <div class="surface p-5">
+          <h3 class="font-semibold mb-4">Issue structure</h3>
+          <dl class="space-y-3 text-[13.5px]">
+            ${irow('Fresh issue', `${shares(ipo.fresh_issue_shares)} sh${upper?` × ₹${upper}`:''}`, toCr(freshVal))}
+            ${irow('Offer for sale', `${shares(ipo.offer_for_sale_shares)} sh${upper?` × ₹${upper}`:''}`, toCr(ofsVal))}
+            <div class="border-t border-border pt-3 flex items-center justify-between">
+              <span class="font-semibold">Total issue size</span>
+              <span class="mono font-bold text-primary-600">${F.fmtCr(ipo.issue_size_cr)}</span>
+            </div>
+          </dl>
+          <h3 class="font-semibold mt-6 mb-3">Capital structure</h3>
+          <dl class="space-y-2.5 text-[13px]">
+            ${irow2('Face value', '₹'+ipo.face_value)}
+            ${irow2('Authorized shares', shares(ipo.authorized_shares))}
+            ${irow2('Paid-up shares', shares(ipo.paid_up_shares))}
+            ${irow2('Pre-issue shares', shares(ipo.pre_issue_shares))}
+            ${irow2('Post-issue shares', shares(ipo.post_issue_shares))}
+          </dl>
+        </div>
+
+        <div class="space-y-6">
+          <div class="surface p-5">
+            <h3 class="font-semibold mb-4">Allocation</h3>
+            <div class="flex items-center gap-6">
+              <div class="relative w-32 h-32 rounded-full shrink-0" style="background:${donut}">
+                <div class="absolute inset-3 rounded-full bg-surface flex flex-col items-center justify-center">
+                  <span class="text-[10px] text-textMuted uppercase tracking-wide">Net offer</span>
+                  <span class="mono text-sm font-bold">100%</span>
+                </div>
+              </div>
+              <div class="space-y-2.5 text-[13px]">
+                ${legend('#4F46E5','QIB',q)}
+                ${legend('#8B5CF6','NII',n)}
+                ${legend('#F59E0B','Retail',r)}
+                ${ipo.market_maker_shares?`<div class="text-[12px] text-textMuted pt-1">+ Market maker reservation ${(ipo.market_maker_shares*100).toFixed(0)}%</div>`:''}
+                ${ipo.anchor_shares?`<div class="text-[12px] text-textMuted">Anchor portion ${(ipo.anchor_shares*100).toFixed(0)}% (of QIB)</div>`:''}
+              </div>
+            </div>
+          </div>
+
+          <div class="surface p-5">
+            <h3 class="font-semibold mb-4">Timeline & how to apply</h3>
+            <div class="grid grid-cols-2 gap-3 mb-4">
+              ${tcell('Bid opens', F.fmtDate(ipo.bid_open_date||ipo.dates.open,true))}
+              ${tcell('Bid closes', F.fmtDate(ipo.bid_close_date||ipo.dates.close,true))}
+              ${tcell('Allotment', F.fmtDate(ipo.allotment_date||ipo.dates.allotment,true))}
+              ${tcell('Listing', F.fmtDate(ipo.listing_date||ipo.dates.listing,true))}
+            </div>
+            <dl class="space-y-2.5 text-[13px] border-t border-border pt-4">
+              ${irow2('Lot size', (ipo.market_lot||ipo.lot_size||'—')+' shares')}
+              ${irow2('Retail min', (ipo.retail_min_lots||1)+' lot · '+shares(ipo.retail_min_shares||ipo.lot_size)+' sh')}
+              ${irow2('Min application', ipo.minimum_application?F.inr(ipo.minimum_application):'—')}
+            </dl>
+          </div>
+        </div>
+      </div>`;
+    }
+    function irow(k,sub,val){ return `<div class="flex items-center justify-between"><div><div class="text-text">${k}</div><div class="text-[12px] text-textMuted mono">${sub}</div></div><span class="mono text-text">${val}</span></div>`; }
+    function irow2(k,v){ return `<div class="flex items-center justify-between"><dt class="text-textMuted">${k}</dt><dd class="mono text-text">${v}</dd></div>`; }
+    function tcell(k,v){ return `<div class="surface-2 p-3"><div class="kpi-label">${k}</div><div class="mono text-[13px] font-semibold mt-1">${v}</div></div>`; }
+    function legend(c,l,pct){ return `<div class="flex items-center gap-2"><span class="w-3 h-3 rounded-sm" style="background:${c}"></span><span class="text-textSecondary w-14">${l}</span><span class="mono text-text font-semibold">${pct.toFixed(0)}%</span></div>`; }
+
+    /* ---------------- TAB: PROMOTERS ---------------- */
+    function tabPromoters(){
+      if (!ipo.promoter_names) return notReady('Promoter details coming soon');
+      const list = (arr)=> (arr||[]).map(p=>`<li class="flex items-center gap-2.5 py-2 border-b border-slate-100 last:border-0">
+        <span class="w-7 h-7 rounded-full bg-slate-100 border border-border flex items-center justify-center text-[11px] mono text-textSecondary shrink-0">${p.split(' ').map(x=>x[0]).slice(0,2).join('')}</span>
+        <span class="text-[13.5px] text-text">${p}</span></li>`).join('');
+      return `<div class="grid lg:grid-cols-3 gap-6">
+        <div class="surface p-5">
+          <h3 class="font-semibold mb-2">Promoters</h3>
+          <ul>${list(ipo.promoter_names)}</ul>
+        </div>
+        <div class="surface p-5">
+          <h3 class="font-semibold mb-2">Promoter group</h3>
+          <ul>${list(ipo.promoter_group_names)}</ul>
+        </div>
+        <div class="surface p-5">
+          <h3 class="font-semibold mb-2">Board of directors</h3>
+          <ul>${list(ipo.board_of_directors)||'<li class="text-textMuted text-[13px] py-2">Not disclosed.</li>'}</ul>
+        </div>
+      </div>`;
+    }
+
+    /* ---------------- TAB: RISKS ---------------- */
+    function tabRisks(){
+      if (!ipo.risks) return notReady('Risk analysis coming soon');
+      return `<div class="surface p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-semibold">Key risks from the DRHP</h3>
+          <span class="badge-mono border-violet-200 text-violet-600">beta · LLM-assisted</span>
+        </div>
+        <ol class="space-y-3">
+          ${ipo.risks.map((r,i)=>`<li class="flex gap-3">
+            <span class="w-6 h-6 rounded-lg bg-rose-500/10 border border-rose-500/25 text-rose-700 text-[12px] font-bold flex items-center justify-center shrink-0 mono">${i+1}</span>
+            <span class="text-[13.5px] text-textSecondary leading-relaxed">${r}</span></li>`).join('')}
+        </ol>
+        <a href="ipo.html?id=${ipo.id}" class="inline-flex items-center gap-1 text-[13px] text-primary-600 hover:text-primary-600 mt-5">View full risk factors section →</a>
+      </div>`;
+    }
+
+    /* ---------------- TAB: DOCUMENTS ---------------- */
+    function tabDocuments(){
+      const docs = [
+        {key:'drhp', label:'Draft Red Herring Prospectus (DRHP)', date:ipo.dates.drhp_filed, url:ipo.documents.drhp},
+        {key:'rhp', label:'Red Herring Prospectus (RHP)', date:ipo.dates.rhp_filed, url:ipo.documents.rhp},
+        {key:'final_prospectus', label:'Final Prospectus', date:ipo.dates.fp_filed, url:ipo.documents.final_prospectus},
+      ];
+      const cards = docs.map(d=>{
+        const has = !!d.url;
+        return `<div class="surface p-5 flex items-center gap-4 ${has?'':'opacity-50'}">
+          <div class="w-11 h-11 rounded-xl ${has?'bg-rose-500/10 border-rose-500/25':'bg-slate-50 border-border'} border flex items-center justify-center shrink-0">
+            <svg class="w-5 h-5 ${has?'text-rose-700':'text-slate-400'}" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.6c0-1.14 0-1.7-.22-2.24a3 3 0 0 0-.66-.98l-3.5-3.5a3 3 0 0 0-.98-.66c-.54-.22-1.1-.22-2.24-.22H8.4c-1.34 0-2.01 0-2.52.26a2.4 2.4 0 0 0-1.05 1.05C4.5 5.59 4.5 6.26 4.5 7.6v8.8c0 1.34 0 2.01.26 2.52a2.4 2.4 0 0 0 1.05 1.05c.51.26 1.18.26 2.52.26h4.35M14 4v3.6c0 .56 0 .84.1 1.05a1 1 0 0 0 .45.44c.2.11.49.11 1.05.11H19"/></svg>
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="font-medium text-[14px] ${has?'text-text':'text-slate-400'}">${d.label}</div>
+            <div class="text-[12px] text-textMuted mt-0.5">${has?'Filed '+F.fmtDate(d.date,true):'Not filed yet'}</div>
+          </div>
+          ${has?`<div class="flex items-center gap-2 shrink-0">
+            <a href="${d.url}" class="btn btn-secondary btn-sm">View online</a>
+            <a href="${d.url}" class="btn btn-dark btn-sm">Download</a>
+          </div>`:`<span class="pill pill-gray shrink-0">Pending</span>`}
+        </div>`;
+      }).join('');
+      const sections = (ipo.sections||[]).map(s=>`<a href="ipo.html?id=${ipo.id}" class="pill pill-gray hover:border-slate-300 hover:text-text">${s.replace(/_/g,' ')}</a>`).join('');
+      return `<div class="space-y-4">
+        <div class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Filed with SEBI</div>
+        ${cards}
+        ${ipo.sections?`<div class="surface p-5 mt-2">
+          <div class="flex items-center justify-between mb-3"><h3 class="font-semibold">Section-by-section</h3><span class="text-[12px] text-textMuted">${ipo.sections.length} sections parsed</span></div>
+          <p class="text-[13px] text-textMuted mb-4">Browse the raw extracted sections — markdown or parsed JSON. For analysts.</p>
+          <div class="flex flex-wrap gap-2">${sections}</div>
+        </div>`:''}
+      </div>`;
+    }
+
+    /* ---------------- TAB: GMP & SUBS ---------------- */
+    function tabGmp(){
+      const g = ipo.gmp, s = ipo.subscription;
+      const hasG = !!g, hasS = !!s;
+      if (!hasG && !hasS) return `<div class="grid sm:grid-cols-2 gap-6">
+        ${lockedCard('Grey Market Premium','Live GMP from investorgain, ipowatch & ipocentral. Get pinged when GMP swings ±10%.','₹—','GMP')}
+        ${lockedCard('Subscription status','Real-time QIB / NII / Retail from BSE & NSE, refreshed every 30 min.','—x','Live subs')}
+      </div>`;
+
+      /* -- GMP panel -- */
+      const gmpPanel = hasG ? (() => {
+        const arr = g.trend==='up'?'▲':g.trend==='down'?'▼':'→';
+        const cls = g.trend==='up'?'text-success-600':g.trend==='down'?'text-danger-600':'text-warning-600';
+        const src = g.trend==='up'?'#059669':g.trend==='down'?'#DC2626':'#D97706';
+        const fillc = g.trend==='up'?'rgba(5,150,105,.08)':g.trend==='down'?'rgba(220,38,38,.08)':'rgba(217,119,6,.08)';
+        const spark = F.sparkline(g.history, { w:260, h:60, stroke:src, fill:fillc });
+        const estListing = g.price + Number((ipo.price_band||'0-0').split('-')[1]||0);
+        return `<div class="surface p-5">
+          <div class="flex items-start justify-between mb-4">
+            <div><div class="eyebrow mb-1">Grey Market Premium</div>
+              <div class="mono font-extrabold text-[38px] leading-none ${cls}">${arr} ₹${g.price}</div>
+              <div class="mono text-[14px] ${cls} mt-1">${g.pct.toFixed(1)}% above upper band (₹${g.upper})</div>
+            </div>
+            <div class="text-right">
+              <div class="kpi-label">Est. listing</div>
+              <div class="mono font-bold text-[20px]">~₹${estListing}</div>
+              <div class="text-[11px] text-textMuted mt-0.5">if GMP holds</div>
+            </div>
+          </div>
+          <div class="rounded-xl bg-surfaceAlt border border-borderSoft p-3 mb-4">${spark}</div>
+          <div class="flex items-center justify-between text-[11.5px] text-textMuted">
+            <span>7-day GMP trend</span>
+            <span class="mono">Updated ${F.relTime(g.updated)} · Source: investorgain</span>
+          </div>
+          <div class="mt-4 pt-4 border-t border-borderSoft">
+            <p class="text-[12.5px] text-textMuted leading-relaxed">GMP is an unofficial indication of demand in the grey market — not an official price and not guaranteed. Use as one data point alongside financials and valuation.</p>
+          </div>
+        </div>`;
+      })() : lockedCard('Grey Market Premium','GMP data not available for this IPO yet.','₹—','GMP');
+
+      /* -- Subscription panel -- */
+      const subsPanel = hasS ? (() => {
+        const tot = s.total, qib = s.qib, nii = s.nii, ret = s.retail;
+        const bar = (v, cls, max=10) => `<div class="flex items-center gap-2 text-[12px]">
+          <div class="h-2 rounded-full bg-slate-100 flex-1 overflow-hidden"><div class="h-full ${cls} rounded-full transition-all" style="width:${Math.min(100,(v/max)*100).toFixed(1)}%"></div></div>
+          <span class="mono font-semibold w-10 text-right">${v.toFixed(2)}x</span></div>`;
+        const totCls = tot>=5?'text-success-600':tot>=1?'text-primary-600':'text-warning-600';
+        const verdict = tot>=10?'Exceptionally well subscribed — allotment will be via lottery.':tot>=5?'Heavily oversubscribed — high competition for allotment.':tot>=1?'Fully subscribed — apply if the issue looks compelling.':'Not yet fully subscribed — check QIB appetite.';
+        return `<div class="surface p-5">
+          <div class="flex items-start justify-between mb-5">
+            <div>
+              <div class="eyebrow mb-1">Subscription Status · Day ${s.day}</div>
+              <div class="mono font-extrabold text-[38px] leading-none ${totCls}">${tot.toFixed(2)}x</div>
+              <div class="text-[12.5px] text-textSecondary mt-1">${s.total_apps.toLocaleString('en-IN')} applications received</div>
+            </div>
+            <div class="text-right">
+              <div class="kpi-label">Updated</div>
+              <div class="text-[12px] text-text mono">${F.relTime(s.updated)}</div>
+            </div>
+          </div>
+
+          <div class="space-y-3 mb-5">
+            <div>
+              <div class="flex items-center justify-between mb-1"><span class="text-[11.5px] font-semibold text-textMuted uppercase tracking-[.08em]">QIB (Qual. Inst.)</span><span class="badge-mono">${qib===0?'Not yet':''}${qib>0?qib.toFixed(2)+'x':''}</span></div>
+              ${bar(qib,'bg-primary-500')}
+            </div>
+            <div>
+              <div class="flex items-center justify-between mb-1"><span class="text-[11.5px] font-semibold text-textMuted uppercase tracking-[.08em]">NII (HNI)</span><span></span></div>
+              ${bar(nii,'bg-violet-500')}
+            </div>
+            <div>
+              <div class="flex items-center justify-between mb-1"><span class="text-[11.5px] font-semibold text-textMuted uppercase tracking-[.08em]">Retail</span><span></span></div>
+              ${bar(ret,'bg-emerald-500')}
+            </div>
+          </div>
+
+          <div class="rounded-xl bg-primary-50 border border-primary-100 px-4 py-3">
+            <p class="text-[12.5px] text-primary-800 font-medium leading-relaxed">💡 ${verdict}</p>
+          </div>
+          <p class="text-[11.5px] text-textMuted mt-3">Source: BSE / NSE · Refreshed every 30 min during bidding window.</p>
+        </div>`;
+      })() : lockedCard('Subscription status','Bidding not started yet — subscription data will appear here once the issue opens.','—x','Live subs');
+
+      return `<div class="grid lg:grid-cols-2 gap-5">${gmpPanel}${subsPanel}</div>`;
+    }
+
+    /* ---------------- TAB: ALLOTMENT ---------------- */
+    function tabAllotment(){
+      const al = ipo.allotment;
+      if (!al) return `<div class="max-w-xl">${lockedCard('Allotment','Allotment info not available for this IPO yet.','—','Allotment')}</div>`;
+
+      const registrarSteps = {
+        bigshare: [
+          'Go to ipo.bigshareonline.com/ipo_allotment.html',
+          'Select the IPO name from the dropdown.',
+          'Choose application type: ASBA / Non-ASBA.',
+          'Enter your PAN or Application Number or DP/Client ID.',
+          'Enter the CAPTCHA and click "Search".',
+          'Your allotment status and number of shares allotted will appear.',
+        ],
+        kfin: [
+          'Go to ris.kfintech.com/clientservices/allotment',
+          'Select "IPO" from the service dropdown.',
+          'Select the IPO name.',
+          'Enter your Application Number or PAN or DP/Client ID.',
+          'Enter the CAPTCHA and click "Submit".',
+          'Allotment status is shown instantly.',
+        ],
+        linkintime: [
+          'Go to linkintime.co.in/initial_offer/public-issues.html',
+          'Select the IPO name from the list.',
+          'Choose lookup type: Application Number, DPID / Client ID, or PAN.',
+          'Enter the required detail and click "Search".',
+          'Your status and allotment details are displayed.',
+        ],
+      };
+      const steps = registrarSteps[al.registrar_slug] || registrarSteps.kfin;
+
+      return `<div class="grid lg:grid-cols-5 gap-5">
+        <!-- timeline + summary -->
+        <div class="lg:col-span-2 space-y-4">
+          <div class="surface p-5">
+            <h3 class="font-semibold mb-4">Allotment timeline</h3>
+            <div class="space-y-3">
+              ${[
+                { label:'Bidding closes', date: ipo.dates.close||ipo.bid_close_date, done: true },
+                { label:'Basis of allotment', date: al.date, done: false, active: true },
+                { label:'Refund / unblock', date: al.refund_date, done: false },
+                { label:'Demat credit', date: al.date, done: false },
+                { label:'Listing', date: al.listing_date, done: false },
+              ].map((s,i) => `
+                <div class="flex items-start gap-3">
+                  <div class="flex flex-col items-center shrink-0">
+                    <div class="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold ${s.active?'bg-primary-600 text-white':s.done?'bg-success-600 text-white':'bg-slate-100 text-textMuted border border-border'}">${s.done?'✓':i+1}</div>
+                    ${i<4?`<div class="w-px h-5 bg-border mt-0.5"></div>`:''}
+                  </div>
+                  <div class="pt-1">
+                    <div class="text-[13px] font-medium ${s.active?'text-primary-700':s.done?'text-textMuted':'text-text'}">${s.label}</div>
+                    <div class="text-[11.5px] text-textMuted mono">${F.fmtDate(s.date,true)}</div>
+                  </div>
+                </div>`).join('')}
+            </div>
+          </div>
+
+          <div class="surface p-5">
+            <h3 class="font-semibold mb-3">Registrar</h3>
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg bg-primary-50 border border-primary-100 flex items-center justify-center">
+                <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0 0 12 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75Z"/></svg>
+              </div>
+              <div>
+                <div class="font-medium text-[13.5px]">${al.registrar}</div>
+                <a href="${al.registrar_url}" target="_blank" rel="noopener" class="text-[12px] text-primary-600 hover:text-primary-700 hover:underline">Check allotment status →</a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- step-by-step guide -->
+        <div class="lg:col-span-3 surface p-5">
+          <div class="flex items-center justify-between mb-5">
+            <h3 class="font-semibold">How to check allotment status</h3>
+            <span class="badge-mono border-primary-200 text-primary-600 bg-primary-50">Step-by-step</span>
+          </div>
+          <ol class="space-y-3.5 mb-6">
+            ${steps.map((s,i) => `<li class="flex gap-3.5">
+              <span class="shrink-0 w-6 h-6 rounded-full bg-primary-600 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">${i+1}</span>
+              <span class="text-[13.5px] text-text leading-snug">${s}</span>
+            </li>`).join('')}
+          </ol>
+          <a href="${al.registrar_url}" target="_blank" rel="noopener" class="btn btn-primary w-full tap">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg>
+            Open ${al.registrar} Allotment Checker
+          </a>
+          <div class="mt-4 pt-4 border-t border-borderSoft">
+            <p class="text-[12px] text-textMuted leading-relaxed">Allotment status is usually available 1–2 hours after the basis of allotment is finalised. Shares are credited to your demat account the following business day. Refunds / ASBA unblocking happens simultaneously.</p>
+          </div>
+
+          <!-- alternate check methods -->
+          <div class="mt-5 pt-4 border-t border-borderSoft">
+            <div class="eyebrow mb-3">Alternative ways to check</div>
+            <div class="space-y-2.5">
+              <div class="surface-2 rounded-lg px-4 py-3">
+                <div class="flex items-center gap-2 mb-0.5">
+                  <svg class="w-4 h-4 text-primary-600 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 0 0 6 3.75v16.5a2.25 2.25 0 0 0 2.25 2.25h7.5A2.25 2.25 0 0 0 18 20.25V3.75a2.25 2.25 0 0 0-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3"/></svg>
+                  <span class="text-[12.5px] font-semibold">BSE / NSE Portal</span>
+                </div>
+                <p class="text-[12px] text-textMuted">Login to BSE/NSE investor portal → IPO section → enter your PAN.</p>
+              </div>
+              <div class="surface-2 rounded-lg px-4 py-3">
+                <div class="flex items-center gap-2 mb-0.5">
+                  <svg class="w-4 h-4 text-primary-600 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 6z"/></svg>
+                  <span class="text-[12.5px] font-semibold">Call / SMS</span>
+                </div>
+                <p class="text-[12px] text-textMuted">SMS <code class="bg-slate-100 px-1 rounded text-[11px]">IPO PAN [your PAN]</code> to 18002660404 (NSDL) to get allotment status via SMS.</p>
+              </div>
+              <div class="surface-2 rounded-lg px-4 py-3">
+                <div class="flex items-center gap-2 mb-0.5">
+                  <svg class="w-4 h-4 text-primary-600 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z"/></svg>
+                  <span class="text-[12.5px] font-semibold">Your Broker App</span>
+                </div>
+                <p class="text-[12px] text-textMuted">Zerodha, Groww, Angel, ICICI — all show allotment status under IPO → Applied section.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    function lockedCard(title, body, big, tag){
+      return `<div class="locked grid-bg">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-semibold">${title}</h3>
+          <span class="badge-mono border-primary-200 text-primary-600 bg-primary-50">Coming soon</span>
+        </div>
+        <div class="mono text-3xl font-bold text-slate-300 mb-3 select-none">${big}</div>
+        <p class="text-[13px] text-textMuted leading-relaxed mb-4">${body}</p>
+        <button class="btn btn-secondary btn-sm">🔔 Notify me when ${tag} is live</button>
+      </div>`;
+    }
+
+    // all declarations exist now — paint the page
+    if (ipo) render();
+  </script>
+</body>
+</html>

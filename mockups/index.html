@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IPORadar — Every Indian IPO, decoded from the filing</title>
+  <meta name="description" content="Track every Indian IPO from DRHP to listing day. Live status, price bands, financials and SEBI filings for MainBoard & SME issues.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="assets/theme.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="assets/data.js"></script>
+  <script src="assets/ui.js"></script>
+</head>
+<body class="min-h-full">
+  <header id="nav"></header>
+
+  <main>
+    <!-- HERO -->
+    <section class="relative">
+      <div class="absolute inset-0 grid-bg opacity-70 pointer-events-none"></div>
+      <div class="container-app relative pt-8 sm:pt-14 pb-8 sm:pb-10">
+        <div class="grid lg:grid-cols-[1.05fr_.95fr] gap-8 lg:gap-10 items-center">
+          <!-- left: always visible -->
+          <div>
+            <div class="eyebrow mb-4 animate-fade-up">
+              <span class="inline-flex items-center gap-1.5 text-emerald-700"><span class="pill-dot bg-emerald-500 animate-pulse-ring"></span><span id="hero-live">live</span></span>
+              <span class="text-border hidden sm:inline">/</span><span class="hidden sm:inline"> SEBI filing intelligence</span>
+            </div>
+            <h1 class="text-[32px] sm:text-[42px] lg:text-[52px] font-extrabold leading-[1.06] tracking-[-.03em] animate-fade-up">
+              Read every Indian IPO like an <span class="bg-gradient-to-r from-primary-600 to-violet-600 bg-clip-text text-transparent">analyst.</span>
+            </h1>
+            <p class="mt-4 text-[15px] sm:text-[17px] text-textSecondary max-w-lg leading-relaxed animate-fade-up">
+              Price bands, financials, promoters and allocations — straight from the DRHP. DRHP to listing day, in one view.
+            </p>
+            <div class="mt-5 flex items-center gap-3 animate-fade-up">
+              <a href="ipos.html?status=open" class="btn btn-primary tap flex-1 sm:flex-none">
+                <span class="inline-flex items-center gap-2">View open IPOs <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6"/></svg></span>
+              </a>
+              <a href="ipos.html" class="btn btn-secondary tap flex-1 sm:flex-none">Browse all</a>
+            </div>
+            <div class="mt-5 flex items-center gap-4 text-[11.5px] text-textMuted animate-fade-up">
+              <span class="flex items-center gap-1.5"><svg class="w-3 h-3 text-primary-500 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path d="M10 1l2.6 5.3 5.9.9-4.2 4.1 1 5.8L10 14.8 4.7 17l1-5.8L1.5 7.2l5.9-.9L10 1z"/></svg>Source-traced</span>
+              <span class="flex items-center gap-1.5"><svg class="w-3 h-3 text-primary-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 6v6l4 2"/><circle cx="12" cy="12" r="9"/></svg>Hourly updates</span>
+              <span class="flex items-center gap-1.5"><svg class="w-3 h-3 text-primary-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M4 12h16M4 17h10"/></svg>MainBoard + SME</span>
+            </div>
+          </div>
+          <!-- right: spotlight — desktop only -->
+          <div id="spotlight" class="hidden lg:block animate-fade-up"></div>
+        </div>
+
+        <!-- mobile spotlight — shown below hero on mobile -->
+        <div id="spotlight-mobile" class="lg:hidden mt-6 animate-fade-up"></div>
+      </div>
+
+      <!-- live ticker -->
+      <div class="relative border-y border-border bg-surface/70 backdrop-blur-sm overflow-hidden">
+        <div class="container-app py-2.5 flex items-center gap-3">
+          <span class="shrink-0 inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[.12em] text-emerald-700">
+            <span class="pill-dot bg-emerald-500 animate-pulse-ring"></span>Live</span>
+          <div class="relative flex-1 overflow-hidden [mask-image:linear-gradient(90deg,transparent,#000_6%,#000_94%,transparent)]">
+            <div id="ticker" class="flex items-center gap-6 whitespace-nowrap animate-marquee"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- STATS RIBBON — 3-col on mobile, 5-col on desktop -->
+    <section class="container-app mt-8 sm:mt-10">
+      <div id="stats" class="surface grid grid-cols-3 md:grid-cols-5 divide-x divide-y md:divide-y-0 divide-border overflow-hidden"></div>
+    </section>
+
+    <!-- MARKET PULSE BANNER -->
+    <section class="container-app mt-10">
+      <div class="card overflow-hidden">
+        <!-- GMP bar -->
+        <div class="px-4 sm:px-5 pt-4 pb-3 flex items-center justify-between border-b border-borderSoft">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-primary-500"></span>
+            <span class="text-[11px] font-bold uppercase tracking-[.1em] text-textMuted">Grey Market Premium</span>
+          </div>
+          <span class="text-[11px] text-slate-400">Source: investorgain · ipowatch · refreshed 1h ago</span>
+        </div>
+        <div id="gmp-bar" class="px-4 sm:px-5 py-3 scroll-x scroll-x-fade gap-0"></div>
+
+        <!-- subscription bar -->
+        <div class="px-4 sm:px-5 pt-3 pb-2 flex items-center justify-between border-t border-borderSoft border-b border-borderSoft">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse-ring"></span>
+            <span class="text-[11px] font-bold uppercase tracking-[.1em] text-textMuted">Live Subscription</span>
+          </div>
+          <span class="text-[11px] text-slate-400">BSE · NSE · updated 30 min ago</span>
+        </div>
+        <div id="subs-grid" class="p-4 sm:p-5 grid sm:grid-cols-3 gap-3"></div>
+      </div>
+    </section>
+
+    <!-- OPEN & CLOSING SOON -->
+    <section class="container-app mt-10">
+      <div class="flex items-end justify-between mb-5">
+        <div>
+          <h2 class="text-[22px] font-bold tracking-tight">Open &amp; closing soon</h2>
+          <p class="text-[13px] text-textMuted mt-1">Live bidding windows — don't miss the cut-off.</p>
+        </div>
+        <a href="ipos.html?status=open" class="btn btn-ghost btn-sm">All open →</a>
+      </div>
+      <div id="opening" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    </section>
+
+    <!-- RECENTLY LISTED -->
+    <section class="container-app mt-14">
+      <div class="flex items-end justify-between mb-5">
+        <div>
+          <h2 class="text-[22px] font-bold tracking-tight">Recently listed</h2>
+          <p class="text-[13px] text-textMuted mt-1">How the latest debuts performed on day one.</p>
+        </div>
+        <a href="ipos.html?status=listed" class="btn btn-ghost btn-sm">All listings →</a>
+      </div>
+      <div id="listed" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    </section>
+
+    <!-- DRHP + UPDATES -->
+    <section class="container-app mt-14 grid lg:grid-cols-5 gap-6">
+      <div class="lg:col-span-3 card p-5">
+        <div class="flex items-center justify-between mb-1">
+          <h2 class="text-base font-bold">Fresh DRHP filings</h2>
+          <span class="pill pill-amber">Early pipeline</span>
+        </div>
+        <p class="text-[13px] text-textMuted mb-3">Companies that just entered the queue — watch them before the price band drops.</p>
+        <div id="drhp" class="-mx-2"></div>
+      </div>
+      <div class="lg:col-span-2 card p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-base font-bold">Latest updates</h2>
+          <a href="news.html" class="text-[12px] text-primary-600 hover:text-primary-700 font-medium">Full feed →</a>
+        </div>
+        <div id="updates" class="-mx-1"></div>
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section class="container-app mt-16">
+      <div class="text-center max-w-xl mx-auto mb-8">
+        <h2 class="text-[22px] font-bold tracking-tight">Built for decisions, not headlines</h2>
+        <p class="text-[13.5px] text-textMuted mt-2">Three things every page is designed to give you fast.</p>
+      </div>
+      <div class="grid sm:grid-cols-3 gap-4">
+        <div class="card p-5 hover-lift">
+          <div class="w-10 h-10 rounded-lg bg-primary-50 border border-primary-100 flex items-center justify-center mb-3.5">
+            <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75 11.2 21l1.55-1.55M3.75 6.75 11.2 14l9.05-9"/></svg>
+          </div>
+          <h3 class="font-semibold text-[15px]">Straight from the filing</h3>
+          <p class="text-[13px] text-textMuted mt-1.5 leading-relaxed">Every number traced to a DRHP/RHP section with a confidence score — never copied from blogs.</p>
+        </div>
+        <div class="card p-5 hover-lift">
+          <div class="w-10 h-10 rounded-lg bg-violet-50 border border-violet-100 flex items-center justify-center mb-3.5">
+            <svg class="w-5 h-5 text-violet-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.5 9 7.5l4 4 8-8M21 3.5h-5m5 0v5"/></svg>
+          </div>
+          <h3 class="font-semibold text-[15px]">3-year financials, decoded</h3>
+          <p class="text-[13px] text-textMuted mt-1.5 leading-relaxed">Revenue, PAT, EBITDA and borrowings — charted, with margins and growth pre-computed.</p>
+        </div>
+        <div class="card p-5 hover-lift">
+          <div class="w-10 h-10 rounded-lg bg-amber-50 border border-amber-100 flex items-center justify-center mb-3.5">
+            <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a24 24 0 0 0 5.454-1.31A8.97 8.97 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.97 8.97 0 0 1-2.312 6.022 24 24 0 0 0 5.455 1.31m5.714 0a24 24 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0"/></svg>
+          </div>
+          <h3 class="font-semibold text-[15px]">Alerts before it moves</h3>
+          <p class="text-[13px] text-textMuted mt-1.5 leading-relaxed">Watch any IPO for DRHP→RHP, open, allotment and listing pings. <span class="text-primary-600 font-medium">Coming soon.</span></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="container-app mt-16">
+      <div class="relative card overflow-hidden p-8 sm:p-10 shadow-md">
+        <div class="absolute inset-0 grid-bg opacity-60"></div>
+        <div class="absolute -right-16 -top-16 w-64 h-64 rounded-full bg-primary-100/60 blur-3xl"></div>
+        <div class="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5">
+          <div>
+            <h2 class="text-2xl font-bold tracking-tight">Never miss a listing again.</h2>
+            <p class="text-textSecondary mt-2 max-w-lg text-[14.5px]">Create a free account to build a watchlist, save filters, and get status-change alerts on the IPOs you care about.</p>
+          </div>
+          <a href="signup.html" class="btn btn-primary shrink-0">Create free account</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer id="footer"></footer>
+
+  <script>
+    UI.layout('home');
+    const D = window.IPO_DATA, U = window.UI;
+    const open = D.ipos.filter(i => i.status === 'open');
+    const upcoming = D.ipos.filter(i => i.status === 'upcoming');
+
+    document.getElementById('hero-live').textContent = `${open.length} open · ${upcoming.length} upcoming`;
+
+    // ---- spotlight ----
+    const sp = D.get(118);
+    const spBand = U.priceBand(sp.price_band);
+    const spLeft = Math.max(0, U.daysB(window.TODAY, sp.dates.close));
+    const spHTML = `
+      <a href="ipo.html?id=${sp.id}" class="group block surface-elevated p-5 relative overflow-hidden hover-lift">
+        <div class="absolute -right-14 -top-14 w-44 h-44 rounded-full bg-primary-100/50 blur-3xl"></div>
+        <div class="relative">
+          <div class="flex items-center justify-between">
+            <span class="eyebrow text-primary-600">★ Spotlight</span>
+            ${U.statusPill(sp.status)}
+          </div>
+          <div class="mt-3 flex items-center gap-2">${U.platformBadge(sp.platform)}<span class="text-[12px] text-textMuted">${sp.sector}</span></div>
+          <h3 class="mt-1.5 text-xl font-bold tracking-tight group-hover:text-primary-700 transition-colors">${sp.company_name}</h3>
+
+          <div class="mt-4 flex items-end justify-between">
+            <div>
+              <div class="kpi-label">Price band</div>
+              <div class="mono text-3xl font-bold num">${spBand}</div>
+            </div>
+            <div class="text-right">
+              <div class="kpi-label">Closes in</div>
+              <div class="mono text-xl font-bold num text-emerald-700">${spLeft}d</div>
+            </div>
+          </div>
+
+          <div class="mt-4 grid grid-cols-3 gap-2">
+            <div class="metric"><div class="metric-label">P/E</div><div class="metric-value">${sp.pe_ratio}</div></div>
+            <div class="metric"><div class="metric-label">ROE</div><div class="metric-value text-success-600">${sp.roe_percent}</div></div>
+            <div class="metric"><div class="metric-label">Issue</div><div class="metric-value">${U.fmtCr(sp.issue_size_cr)}</div></div>
+          </div>
+
+          <div class="mt-4 flex items-center justify-between gap-3 rounded-lg bg-surfaceAlt border border-borderSoft px-3.5 py-2.5">
+            <div>
+              <div class="kpi-label">Revenue ${sp.financial_years[0]}–${sp.financial_years[2].replace('FY','')}</div>
+              <div class="mono text-[13px] font-semibold text-success-600 num mt-0.5">▲ ${sp.revenue_growth_percent} growth</div>
+            </div>
+            ${U.sparkline(sp.total_revenue, { w: 120, h: 36 })}
+          </div>
+
+          <div class="mt-4 btn btn-primary w-full">View full analysis
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m-6-6 6 6-6 6"/></svg></div>
+        </div>
+      </a>`;
+    document.getElementById('spotlight').innerHTML = spHTML;
+    document.getElementById('spotlight-mobile').innerHTML = spHTML;
+
+    // ---- ticker ----
+    const tick = [...open, ...upcoming].map(i => {
+      const m = U.statusMeta(i.status);
+      const band = U.priceBand(i.price_band) || 'TBA';
+      const when = i.status === 'open' ? `closes ${U.fmtDate(i.dates.close)}` : `opens ${U.fmtDate(i.dates.open)}`;
+      return `<a href="ipo.html?id=${i.id}" class="inline-flex items-center gap-2 text-[12.5px] hover:text-primary-700">
+        <span class="pill-dot ${m.dot}"></span><span class="font-medium text-text">${i.company_name.replace(' Limited','')}</span>
+        <span class="text-textMuted mono num">${band}</span><span class="text-slate-400">· ${when}</span></a>`;
+    }).join('');
+    document.getElementById('ticker').innerHTML = tick + tick;
+
+    // ---- stats ribbon ----
+    const S = D.stats;
+    const ICON = {
+      total:'M4 7h16M4 12h16M4 17h10', open:'M5 12l5 5 9-11', up:'M3 13.5 9 7.5l4 4 8-8',
+      listed:'M3 3v18h18M7 14l3-3 3 3 5-6', drhp:'M8 7h8M8 11h8M8 15h5',
+    };
+    const stat = (label, val, sub, cls, icon, hide) => `
+      <div class="px-3.5 sm:px-5 py-3 sm:py-4 ${hide?'hidden md:block':''}">
+        <div class="flex items-center gap-1 kpi-label text-[9px] sm:text-[10.5px]"><svg class="w-3 h-3 sm:w-3.5 sm:h-3.5 ${cls||'text-textMuted'} shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="${icon}"/></svg>${label}</div>
+        <div class="mono text-[17px] sm:text-[22px] font-bold mt-1 num ${cls||'text-text'}">${val}</div>
+        <div class="text-[10px] sm:text-[11px] text-textMuted mt-0.5">${sub}</div>
+      </div>`;
+    document.getElementById('stats').innerHTML =
+      stat('Total', S.total_ipos.toLocaleString('en-IN'), 'all segments', 'text-text', ICON.total) +
+      stat('Open', S.open, 'live bidding', 'text-emerald-600', ICON.open) +
+      stat('Upcoming', S.upcoming, 'this week', 'text-purple-600', ICON.up) +
+      stat('Listed', S.listed.toLocaleString('en-IN'), 'all time', 'text-teal-600', ICON.listed, true) +
+      stat('DRHP queue', S.drhp.toLocaleString('en-IN'), 'awaiting price', 'text-amber-600', ICON.drhp, true);
+
+    // ---- market pulse: GMP bar ----
+    const withGmp = D.ipos.filter(i => i.gmp).sort((a,b) => b.gmp.pct - a.gmp.pct);
+    document.getElementById('gmp-bar').innerHTML = withGmp.map(i => {
+      const g = i.gmp, m = U.statusMeta(i.status);
+      const cls = g.trend === 'up' ? 'text-success-600' : g.trend === 'down' ? 'text-danger-600' : 'text-warning-600';
+      const arr = g.trend === 'up' ? '▲' : g.trend === 'down' ? '▼' : '→';
+      const spark = U.sparkline(g.history, { w:56, h:24, stroke: g.trend==='up'?'#059669':g.trend==='down'?'#DC2626':'#D97706', fill: g.trend==='up'?'rgba(5,150,105,.08)':g.trend==='down'?'rgba(220,38,38,.08)':'rgba(217,119,6,.08)' });
+      return `<a href="ipo.html?id=${i.id}" class="shrink-0 flex items-center gap-3 px-4 py-2.5 border-r border-borderSoft last:border-0 hover:bg-surfaceAlt transition-colors min-w-[200px]">
+        <div class="flex-1 min-w-0">
+          <div class="text-[12px] font-semibold text-text truncate">${i.company_name.replace(' Limited','')}</div>
+          <div class="flex items-center gap-2 mt-0.5">
+            ${U.statusPill(i.status)}
+          </div>
+        </div>
+        <div class="text-right shrink-0">
+          <div class="mono font-bold text-[15px] ${cls}">${arr} ₹${g.price}</div>
+          <div class="text-[11px] ${cls} font-semibold">${g.pct.toFixed(1)}%</div>
+        </div>
+        <div class="hidden sm:block shrink-0">${spark}</div>
+      </a>`;
+    }).join('');
+
+    // ---- market pulse: subscription grid ----
+    const withSubs = D.ipos.filter(i => i.subscription && (i.status === 'open' || i.status === 'closed'));
+    document.getElementById('subs-grid').innerHTML = withSubs.map(i => {
+      const s = i.subscription;
+      const totalCls = s.total >= 5 ? 'text-success-600' : s.total >= 1 ? 'text-primary-600' : 'text-warning-600';
+      const bar = (pct, cls) => `<div class="h-1.5 rounded-full bg-slate-100 overflow-hidden mt-0.5"><div class="h-full ${cls} rounded-full" style="width:${Math.min(100,(pct/10)*100)}%"></div></div>`;
+      return `<a href="ipo.html?id=${i.id}&tab=gmp" class="surface-2 rounded-xl p-3.5 hover:border-slate-300 transition-colors block">
+        <div class="flex items-start justify-between gap-2 mb-2.5">
+          <div class="min-w-0"><div class="text-[12.5px] font-semibold text-text truncate">${i.company_name.replace(' Limited','')}</div>
+          <div class="text-[10.5px] text-textMuted mt-0.5">Day ${s.day} · ${s.total_apps.toLocaleString('en-IN')} apps</div></div>
+          <div class="text-right shrink-0"><div class="mono font-bold text-[18px] ${totalCls}">${s.total.toFixed(2)}x</div><div class="text-[10px] text-textMuted">overall</div></div>
+        </div>
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between text-[11px]"><span class="text-textMuted w-10">QIB</span>${bar(s.qib,'bg-primary-500')}<span class="mono font-semibold ml-2 text-text w-10 text-right">${s.qib.toFixed(2)}x</span></div>
+          <div class="flex items-center justify-between text-[11px]"><span class="text-textMuted w-10">NII</span>${bar(s.nii,'bg-violet-500')}<span class="mono font-semibold ml-2 text-text w-10 text-right">${s.nii.toFixed(2)}x</span></div>
+          <div class="flex items-center justify-between text-[11px]"><span class="text-textMuted w-10">Retail</span>${bar(s.retail,'bg-emerald-500')}<span class="mono font-semibold ml-2 text-text w-10 text-right">${s.retail.toFixed(2)}x</span></div>
+        </div>
+      </a>`;
+    }).join('');
+
+    // ---- card grids ----
+    document.getElementById('opening').innerHTML = [...open, ...upcoming].slice(0, 6).map(U.ipoCard).join('');
+    document.getElementById('listed').innerHTML = D.ipos.filter(i => i.status === 'listed').slice(0, 6).map(U.ipoCard).join('');
+    document.getElementById('drhp').innerHTML = D.ipos.filter(i => i.status === 'drhp_filed').map(U.ipoRow).join('');
+
+    // ---- updates ----
+    document.getElementById('updates').innerHTML = D.statusChanges.slice(0, 7).map(c => {
+      const m = U.statusMeta(c.to);
+      return `<a href="ipo.html?id=${c.id}" class="flex items-start gap-3 px-2 py-2 rounded-lg hover:bg-slate-50 transition-colors">
+        <span class="pill-dot ${m.dot} mt-1.5 shrink-0"></span>
+        <span class="min-w-0 flex-1">
+          <span class="block text-[13px] text-text truncate font-medium">${c.company_name.replace(' Limited','')}</span>
+          <span class="block text-[12px] text-textMuted">${c.from ? U.statusMeta(c.from).label + ' → ' : 'New · '}<span class="text-textSecondary">${m.label}</span></span>
+        </span>
+        <span class="text-[11px] text-slate-400 mono shrink-0">${U.relTime(c.at)}</span>
+      </a>`;
+    }).join('');
+  </script>
+</body>
+</html>

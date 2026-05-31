@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Status feed — IPORadar</title>
+  <meta name="description" content="Live status-change feed across every tracked Indian IPO.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="assets/theme.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="assets/data.js"></script>
+  <script src="assets/ui.js"></script>
+</head>
+<body class="min-h-full">
+  <header id="nav"></header>
+
+  <main class="container-app py-8 max-w-3xl">
+    <div class="flex items-center justify-between mb-1">
+      <h1 class="text-2xl font-bold">Status feed</h1>
+      <span class="pill pill-green"><span class="pill-dot bg-primary-500 animate-pulse-ring"></span>Live</span>
+    </div>
+    <p class="text-[13px] text-textMuted mb-8">Every status change across all tracked IPOs — DRHP filings, SEBI approvals, openings and listings, newest first.</p>
+    <div id="feed" class="space-y-8"></div>
+  </main>
+
+  <footer id="footer"></footer>
+
+  <script>
+    UI.layout('news');
+    const D = window.IPO_DATA;
+
+    // group by day bucket
+    function bucket(at){
+      const days = Math.floor((new Date(window.TODAY+'T23:59:59Z') - new Date(at)) / 8.64e7);
+      if (days <= 0) return 'Today';
+      if (days === 1) return 'Yesterday';
+      return UI.fmtDate(at, true);
+    }
+    function time(at){
+      const d = new Date(at);
+      let h = d.getUTCHours(), m = d.getUTCMinutes();
+      const ap = h >= 12 ? 'PM':'AM'; h = h%12||12;
+      return `${h}:${String(m).padStart(2,'0')} ${ap}`;
+    }
+
+    const groups = {};
+    D.statusChanges.forEach(c => { (groups[bucket(c.at)] ||= []).push(c); });
+
+    document.getElementById('feed').innerHTML = Object.entries(groups).map(([day, items]) => `
+      <div>
+        <div class="flex items-center gap-3 mb-3">
+          <h2 class="text-[12px] uppercase tracking-wider text-slate-400 font-bold">${day}</h2>
+          <div class="flex-1 h-px bg-border"></div>
+        </div>
+        <div class="surface divide-y divide-border">
+          ${items.map(c => {
+            const to = UI.statusMeta(c.to), from = c.from ? UI.statusMeta(c.from) : null;
+            return `<a href="ipo.html?id=${c.id}" class="flex items-center gap-4 px-4 py-3.5 hover:bg-slate-50 transition-colors">
+              <span class="text-[11px] text-slate-400 mono w-16 shrink-0">${time(c.at)}</span>
+              <span class="w-8 h-8 rounded-lg bg-slate-100 border border-border flex items-center justify-center shrink-0">
+                <span class="pill-dot ${to.dot}"></span>
+              </span>
+              <span class="min-w-0 flex-1">
+                <span class="block text-[14px] text-text font-medium truncate">${c.company_name}</span>
+                <span class="flex items-center gap-1.5 text-[12px] mt-0.5">
+                  ${from ? `<span class="text-textMuted">${from.label}</span><span class="text-slate-400">→</span>` : `<span class="badge-mono border-primary-200 text-primary-600">NEW</span>`}
+                  <span class="text-textSecondary">${to.label}</span>
+                </span>
+              </span>
+              ${UI.platformBadge(c.platform)}
+            </a>`;
+          }).join('')}
+        </div>
+      </div>`).join('');
+  </script>
+</body>
+</html>

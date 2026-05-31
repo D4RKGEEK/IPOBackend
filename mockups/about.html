@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>About & methodology — IPORadar</title>
+  <meta name="description" content="How IPORadar sources, parses and scores Indian IPO data from SEBI filings.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="assets/theme.js"></script>
+  <script src="assets/data.js"></script>
+  <script src="assets/ui.js"></script>
+</head>
+<body class="min-h-full">
+  <header id="nav"></header>
+
+  <main class="container-app py-12 max-w-3xl">
+    <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full surface-2 text-[12px] text-textSecondary mb-6">
+      <span class="pill-dot bg-primary-500"></span> Methodology
+    </div>
+    <h1 class="text-3xl font-bold leading-tight">We read the filing so you don't have to.</h1>
+    <p class="text-lg text-textSecondary mt-4">IPORadar turns 300-page SEBI prospectuses into structured, traceable data. Every number you see links back to a section of an actual DRHP, RHP or final prospectus — with a confidence score attached.</p>
+
+    <!-- pipeline -->
+    <div class="surface p-6 mt-10">
+      <h2 class="font-bold mb-5">How the data flows</h2>
+      <div class="space-y-5">
+        <div class="flex gap-4">
+          <div class="flex flex-col items-center"><span class="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-700 font-bold text-[13px] flex items-center justify-center mono">1</span><div class="w-px flex-1 bg-border my-1"></div></div>
+          <div class="pb-2"><h3 class="font-semibold text-[14px]">Discover filings</h3><p class="text-[13px] text-textMuted mt-1">We monitor SEBI, BSE and NSE for new DRHP / RHP / prospectus filings across MainBoard and SME segments.</p></div>
+        </div>
+        <div class="flex gap-4">
+          <div class="flex flex-col items-center"><span class="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/25 text-blue-700 font-bold text-[13px] flex items-center justify-center mono">2</span><div class="w-px flex-1 bg-border my-1"></div></div>
+          <div class="pb-2"><h3 class="font-semibold text-[14px]">Parse & section</h3><p class="text-[13px] text-textMuted mt-1">Each document is split into named sections (capital structure, objects, financials, risk factors) and converted to clean markdown.</p></div>
+        </div>
+        <div class="flex gap-4">
+          <div class="flex flex-col items-center"><span class="w-8 h-8 rounded-lg bg-violet-50 border border-violet-200 text-violet-600 font-bold text-[13px] flex items-center justify-center mono">3</span><div class="w-px flex-1 bg-border my-1"></div></div>
+          <div class="pb-2"><h3 class="font-semibold text-[14px]">Extract structured fields</h3><p class="text-[13px] text-textMuted mt-1">Promoters, financials, allocations and ratios are extracted into a unified record, each field tagged with its source section and a confidence score.</p></div>
+        </div>
+        <div class="flex gap-4">
+          <div class="flex flex-col items-center"><span class="w-8 h-8 rounded-lg bg-primary-50 border border-primary-200 text-primary-600 font-bold text-[13px] flex items-center justify-center mono">4</span></div>
+          <div><h3 class="font-semibold text-[14px]">Publish & version</h3><p class="text-[13px] text-textMuted mt-1">Records publish only after review. Every refresh bumps a version so you always know how fresh the data is.</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- sources + cadence -->
+    <div class="grid sm:grid-cols-2 gap-4 mt-6">
+      <div class="surface p-5">
+        <h3 class="font-semibold mb-3">Data sources</h3>
+        <ul class="space-y-2 text-[13px] text-textSecondary">
+          <li class="flex items-center gap-2"><span class="pill-dot bg-primary-500"></span>SEBI DRHP / RHP / prospectus filings</li>
+          <li class="flex items-center gap-2"><span class="pill-dot bg-primary-500"></span>BSE & NSE issue metadata</li>
+          <li class="flex items-center gap-2"><span class="pill-dot bg-slate-400"></span>GMP feeds <span class="text-slate-400">(coming soon)</span></li>
+          <li class="flex items-center gap-2"><span class="pill-dot bg-slate-400"></span>Registrar allotment <span class="text-slate-400">(coming soon)</span></li>
+        </ul>
+      </div>
+      <div class="surface p-5">
+        <h3 class="font-semibold mb-3">Refresh cadence</h3>
+        <ul class="space-y-2 text-[13px] text-textSecondary">
+          <li class="flex items-center justify-between"><span>New filings</span><span class="mono text-text">≤ 24 h</span></li>
+          <li class="flex items-center justify-between"><span>Status changes</span><span class="mono text-text">hourly</span></li>
+          <li class="flex items-center justify-between"><span>Open-IPO data</span><span class="mono text-text">~1 min</span></li>
+          <li class="flex items-center justify-between"><span>Stats overview</span><span class="mono text-text">~5 min</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- coverage stats -->
+    <div id="coverage" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6"></div>
+
+    <!-- disclaimer -->
+    <div class="surface-2 border-amber-500/20 p-5 mt-8">
+      <h3 class="font-semibold text-amber-700 text-[14px] mb-1.5">⚠ Disclaimer</h3>
+      <p class="text-[12.5px] text-textMuted leading-relaxed">IPORadar is an information tool, not a registered investment adviser. Data is parsed from public filings and may contain errors or omissions — always verify against the official prospectus before applying. Nothing here is a recommendation to buy or sell any security. Investments in securities are subject to market risk.</p>
+    </div>
+
+    <div class="text-center mt-10">
+      <a href="signup.html" class="btn btn-primary mx-auto">Start tracking IPOs free</a>
+    </div>
+  </main>
+
+  <footer id="footer"></footer>
+
+  <script>
+    UI.layout('about');
+    const S = window.IPO_DATA.stats;
+    const c = (l,v)=>`<div class="surface p-4 text-center"><div class="mono text-2xl font-bold text-text">${v}</div><div class="kpi-label mt-1">${l}</div></div>`;
+    document.getElementById('coverage').innerHTML =
+      c('IPOs tracked', S.total_ipos.toLocaleString('en-IN')) +
+      c('MainBoard', S.mainboard.toLocaleString('en-IN')) +
+      c('SME', S.sme.toLocaleString('en-IN')) +
+      c('With DRHP', S.drhp.toLocaleString('en-IN'));
+  </script>
+</body>
+</html>

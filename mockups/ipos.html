@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>All IPOs — IPORadar</title>
+  <meta name="description" content="Filter and search 1,311 Indian IPOs by status, platform, year and documents.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="assets/theme.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="assets/data.js"></script>
+  <script src="assets/ui.js"></script>
+</head>
+<body class="min-h-full">
+  <header id="nav"></header>
+
+  <main class="container-app py-5 sm:py-8" x-data="ipoList()" x-init="init()">
+    <div class="flex items-center justify-between gap-3 mb-4">
+      <div>
+        <h1 class="text-xl sm:text-2xl font-bold">All IPOs</h1>
+        <p class="text-[12px] text-textMuted mt-0.5">MainBoard &amp; SME · DRHP to listing</p>
+      </div>
+      <div class="text-[12px] text-textMuted shrink-0">
+        <span class="mono text-text font-semibold" x-text="filtered.length"></span> results
+      </div>
+    </div>
+
+    <!-- FILTER BAR -->
+    <div class="sticky top-14 z-30 surface mb-5 backdrop-blur-xl bg-white/95 border-b border-border rounded-none sm:rounded-xl sm:border overflow-hidden">
+      <!-- search row -->
+      <div class="px-4 pt-3 pb-2 flex items-center gap-2">
+        <div class="relative flex-1 min-w-0">
+          <svg class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.3-4.3M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"/></svg>
+          <input x-model="search" @input="page=1" class="input pl-9 tap" placeholder="Search company or sector…">
+        </div>
+        <!-- sort + reset on mobile right side -->
+        <select x-model="sort" class="input w-auto shrink-0 hidden sm:block">
+          <option value="latest">Latest</option>
+          <option value="closing">Closing soon</option>
+          <option value="price">Price ↑</option>
+          <option value="az">A–Z</option>
+        </select>
+        <button x-show="dirty" @click="reset()" class="shrink-0 btn btn-ghost btn-sm tap">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <!-- status chips — horizontally scrollable -->
+      <div class="px-4 pb-2 scroll-x scroll-x-fade gap-1.5">
+        <template x-for="c in statusChips" :key="c.v">
+          <button @click="status = (status===c.v?'':c.v); page=1"
+            class="shrink-0 px-3 py-1.5 rounded-full text-[12px] font-semibold border transition-colors tap"
+            :class="status===c.v ? 'bg-primary-600 text-white border-primary-600' : 'border-border text-textSecondary bg-surface hover:border-slate-300'"
+            x-text="c.label"></button>
+        </template>
+        <span class="shrink-0 w-px h-5 bg-border self-center mx-0.5"></span>
+        <template x-for="d in docChips" :key="d.v">
+          <button @click="toggleDoc(d.v); page=1"
+            class="shrink-0 px-3 py-1.5 rounded-full text-[12px] font-semibold border transition-colors tap"
+            :class="docs.includes(d.v) ? 'bg-slate-800 text-white border-slate-800' : 'border-border text-textSecondary bg-surface hover:border-slate-300'"
+            x-text="d.label"></button>
+        </template>
+      </div>
+
+      <!-- platform + year — small row on mobile -->
+      <div class="px-4 pb-3 flex items-center gap-2 border-t border-borderSoft pt-2.5">
+        <select x-model="platform" @change="page=1" class="input w-auto flex-1 sm:flex-none tap text-[13px]">
+          <option value="">All platforms</option><option>MainBoard</option><option>SME</option>
+        </select>
+        <select x-model="year" @change="page=1" class="input w-auto flex-1 sm:flex-none tap text-[13px]">
+          <option value="">Any year</option><option>2026</option><option>2025</option><option>2024</option>
+        </select>
+        <select x-model="sort" class="input w-auto flex-1 sm:hidden tap text-[13px]">
+          <option value="latest">Latest</option>
+          <option value="closing">Closing soon</option>
+          <option value="price">Price ↑</option>
+          <option value="az">A–Z</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- RESULTS -->
+    <div x-show="pageItems.length" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4" x-html="gridHTML"></div>
+
+    <!-- EMPTY -->
+    <div x-show="!filtered.length" class="surface p-16 text-center">
+      <div class="w-14 h-14 rounded-2xl bg-slate-50 border border-border flex items-center justify-center mx-auto mb-4">
+        <svg class="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.3-4.3M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"/></svg>
+      </div>
+      <h3 class="font-semibold">No IPOs match these filters</h3>
+      <p class="text-[13px] text-textMuted mt-1.5 mb-4">Try widening your search or clearing a filter.</p>
+      <button @click="reset()" class="btn btn-secondary btn-sm mx-auto">Reset filters</button>
+    </div>
+
+    <!-- PAGINATION -->
+    <div x-show="totalPages > 1" class="flex items-center justify-center gap-1.5 mt-8">
+      <button @click="page=Math.max(1,page-1)" :disabled="page===1" class="btn btn-secondary btn-sm">← Prev</button>
+      <template x-for="p in totalPages" :key="p">
+        <button @click="page=p" class="w-9 h-9 rounded-lg text-[13px] font-medium border transition-colors"
+          :class="page===p ? 'bg-primary-500 text-white border-primary-300' : 'border-border text-textSecondary hover:text-text hover:border-slate-300'"
+          x-text="p"></button>
+      </template>
+      <button @click="page=Math.min(totalPages,page+1)" :disabled="page===totalPages" class="btn btn-secondary btn-sm">Next →</button>
+    </div>
+  </main>
+
+  <footer id="footer"></footer>
+
+  <script>
+    UI.layout('all');
+    function ipoList() {
+      return {
+        all: window.IPO_DATA.ipos,
+        search: '', status: '', platform: '', year: '', sort: 'latest',
+        docs: [], page: 1, perPage: 12,
+        statusChips: [
+          { v:'open', label:'Open' }, { v:'upcoming', label:'Upcoming' }, { v:'listed', label:'Listed' },
+          { v:'drhp_filed', label:'DRHP' }, { v:'rhp_filed', label:'RHP' }, { v:'closed', label:'Closed' },
+        ],
+        docChips: [ {v:'drhp',label:'Has DRHP'}, {v:'rhp',label:'Has RHP'}, {v:'final_prospectus',label:'Has FP'} ],
+        init() {
+          const p = new URLSearchParams(location.search);
+          if (p.get('status')) this.status = p.get('status');
+          if (p.get('platform')) this.platform = p.get('platform');
+        },
+        get dirty() { return this.search||this.status||this.platform||this.year||this.docs.length||this.sort!=='latest'; },
+        toggleDoc(v){ this.docs.includes(v) ? this.docs=this.docs.filter(x=>x!==v) : this.docs.push(v); },
+        reset(){ this.search=this.status=this.platform=this.year=''; this.sort='latest'; this.docs=[]; this.page=1; },
+        yearOf(i){ const d=i.dates.open||i.dates.drhp_filed||i.dates.rhp_filed||''; return d.slice(0,4); },
+        get filtered(){
+          let r = this.all.filter(i=>{
+            if (this.search){ const q=this.search.toLowerCase(); if(!(i.company_name.toLowerCase().includes(q)||(i.sector||'').toLowerCase().includes(q))) return false; }
+            if (this.status && i.status!==this.status) return false;
+            if (this.platform && i.platform!==this.platform) return false;
+            if (this.year && this.yearOf(i)!==this.year) return false;
+            for (const d of this.docs){ if(!i.documents[d]) return false; }
+            return true;
+          });
+          const lo = i => i.price_band ? Number(i.price_band.split('-')[0]) : Infinity;
+          if (this.sort==='az') r.sort((a,b)=>a.company_name.localeCompare(b.company_name));
+          else if (this.sort==='price') r.sort((a,b)=>lo(a)-lo(b));
+          else if (this.sort==='closing') r.sort((a,b)=>(a.dates.close||'9')<(b.dates.close||'9')?-1:1);
+          else r.sort((a,b)=>(b.unified_updated_at||'')<(a.unified_updated_at||'')?-1:1);
+          return r;
+        },
+        get totalPages(){ return Math.max(1, Math.ceil(this.filtered.length/this.perPage)); },
+        get pageItems(){ const s=(this.page-1)*this.perPage; return this.filtered.slice(s, s+this.perPage); },
+        get gridHTML(){ return this.pageItems.map(UI.ipoCard).join(''); },
+      };
+    }
+  </script>
+</body>
+</html>

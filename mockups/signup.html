@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign up — IPORadar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+  <script src="assets/theme.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="assets/data.js"></script>
+  <script src="assets/ui.js"></script>
+</head>
+<body class="min-h-full">
+  <div class="min-h-screen grid lg:grid-cols-2">
+    <!-- FORM -->
+    <div class="flex flex-col px-6 py-8 sm:px-12">
+      <a href="index.html" class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shadow-md">
+          <span class="text-white font-extrabold text-sm">IPO</span>
+        </div>
+        <span class="font-bold text-[15px]">IPO<span class="text-primary-600">Radar</span></span>
+      </a>
+
+      <div class="flex-1 flex items-center justify-center">
+        <div class="w-full max-w-sm py-10" x-data="signupForm()">
+          <h1 class="text-2xl font-bold">Create your account</h1>
+          <p class="text-[13.5px] text-textMuted mt-2">Free forever. Watchlist + status alerts in 30 seconds.</p>
+
+          <button class="btn btn-secondary w-full mt-7">
+            <svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#fff" d="M21.35 11.1H12v2.9h5.35c-.25 1.36-1.02 2.5-2.16 3.27v2.7h3.5c2.05-1.9 3.2-4.7 3.2-8.02 0-.55-.05-1.08-.14-1.85Z" opacity=".95"/><path fill="#34a853" d="M12 22c2.7 0 4.96-.9 6.6-2.43l-3.5-2.7c-.97.65-2.2 1.04-3.1 1.04-2.38 0-4.4-1.6-5.13-3.77H3.3v2.37A10 10 0 0 0 12 22Z"/><path fill="#fbbc05" d="M6.87 14.14a6 6 0 0 1 0-3.84V7.93H3.3a10 10 0 0 0 0 9l3.57-2.79Z"/><path fill="#ea4335" d="M12 6.5c1.47 0 2.78.5 3.82 1.5l2.84-2.84A10 10 0 0 0 3.3 7.93l3.57 2.37C7.6 8.13 9.62 6.5 12 6.5Z"/></svg>
+            Continue with Google
+          </button>
+
+          <div class="flex items-center gap-3 my-6">
+            <div class="flex-1 h-px bg-border"></div><span class="text-[11px] text-slate-400 uppercase tracking-wider">or</span><div class="flex-1 h-px bg-border"></div>
+          </div>
+
+          <form class="space-y-4" @submit.prevent="if(valid) location.href='index.html'">
+            <div>
+              <label class="label">Full name</label>
+              <input x-model="name" class="input" placeholder="Aarav Sharma">
+            </div>
+            <div>
+              <label class="label">Email</label>
+              <input x-model="email" type="email" class="input" placeholder="you@email.com">
+            </div>
+            <div>
+              <label class="label">Password</label>
+              <input x-model="pw" type="password" class="input" placeholder="8+ chars, 1 number">
+              <div class="flex gap-1 mt-2">
+                <template x-for="i in 3" :key="i">
+                  <div class="h-1 flex-1 rounded-full transition-colors" :class="strength>=i ? (strength===1?'bg-rose-500':strength===2?'bg-amber-500':'bg-primary-500') : 'bg-slate-100'"></div>
+                </template>
+              </div>
+              <p class="text-[11px] mt-1.5" :class="strength===3?'text-primary-600':'text-slate-400'" x-text="strengthLabel"></p>
+            </div>
+            <label class="flex items-start gap-2.5 cursor-pointer">
+              <input x-model="agree" type="checkbox" class="mt-0.5 rounded border-border bg-slate-50 text-primary-600 focus:ring-primary-200">
+              <span class="text-[12.5px] text-textMuted">I agree to the <a href="#" class="text-primary-600">Terms</a> & <a href="#" class="text-primary-600">Privacy Policy</a>.</span>
+            </label>
+            <button class="btn btn-primary w-full" :disabled="!valid">Create account</button>
+          </form>
+
+          <p class="text-[13px] text-textMuted text-center mt-6">Already have an account? <a href="login.html" class="text-primary-600 hover:text-primary-600 font-medium">Log in</a></p>
+        </div>
+      </div>
+      <p class="text-[11px] text-slate-400">© 2026 IPORadar · Not investment advice.</p>
+    </div>
+
+    <!-- SIDE PANEL: onboarding preview -->
+    <div class="hidden lg:flex relative overflow-hidden border-l border-border bg-surface items-center justify-center p-12">
+      <div class="absolute inset-0 grid-bg opacity-60"></div>
+      <div class="absolute -right-32 top-10 w-96 h-96 rounded-full bg-violet-50 blur-3xl"></div>
+      <div class="absolute -left-20 bottom-0 w-80 h-80 rounded-full bg-primary-50 blur-3xl"></div>
+      <div class="relative max-w-sm">
+        <h2 class="text-2xl font-bold leading-snug">What you get, free.</h2>
+        <ul class="mt-6 space-y-3.5">
+          <li class="flex items-start gap-3"><span class="mt-0.5 w-5 h-5 rounded-md bg-primary-50 border border-primary-200 flex items-center justify-center shrink-0"><svg class="w-3 h-3 text-primary-600" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4L19 7"/></svg></span><div><div class="text-[14px] font-medium">Watchlist + bell alerts</div><div class="text-[12.5px] text-textMuted">DRHP→RHP, opens, listing day.</div></div></li>
+          <li class="flex items-start gap-3"><span class="mt-0.5 w-5 h-5 rounded-md bg-primary-50 border border-primary-200 flex items-center justify-center shrink-0"><svg class="w-3 h-3 text-primary-600" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4L19 7"/></svg></span><div><div class="text-[14px] font-medium">Saved searches</div><div class="text-[12.5px] text-textMuted">"Open SME IPOs" pinned to your home.</div></div></li>
+          <li class="flex items-start gap-3"><span class="mt-0.5 w-5 h-5 rounded-md bg-primary-50 border border-primary-200 flex items-center justify-center shrink-0"><svg class="w-3 h-3 text-primary-600" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4L19 7"/></svg></span><div><div class="text-[14px] font-medium">Application tracker</div><div class="text-[12.5px] text-textMuted">Log a bid, get an allotment-day reminder.</div></div></li>
+        </ul>
+        <div class="surface p-4 mt-7">
+          <div class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold mb-2">After signup</div>
+          <div class="flex items-center gap-2 text-[12px] text-textMuted flex-wrap">
+            <span class="pill pill-gray">Pick brokers</span><span class="text-slate-400">→</span>
+            <span class="pill pill-gray">Bid range</span><span class="text-slate-400">→</span>
+            <span class="pill pill-gray">Alerts</span><span class="text-slate-400">→</span>
+            <span class="pill pill-green">Seed watchlist</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function signupForm(){
+      return {
+        name:'', email:'', pw:'', agree:false,
+        get strength(){ let s=0; if(this.pw.length>=8)s++; if(/[0-9]/.test(this.pw))s++; if(/[^A-Za-z0-9]/.test(this.pw)||(this.pw.length>=12&&s>=2))s++; return Math.min(s,3); },
+        get strengthLabel(){ return ['Use 8+ chars with a number','Weak','Good','Strong password ✓'][this.strength]; },
+        get valid(){ return this.name && /\S+@\S+\.\S+/.test(this.email) && this.pw.length>=8 && /[0-9]/.test(this.pw) && this.agree; },
+      };
+    }
+  </script>
+</body>
+</html>
