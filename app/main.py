@@ -10,7 +10,7 @@ Boot-time concerns:
 import logging
 import os
 from math import ceil
-from pathlib import Path
+from pathlib import Path as FilePath
 from typing import Any, Optional
 
 # Auto-detect a usable SSL cert bundle without hardcoding macOS paths.
@@ -764,7 +764,7 @@ async def dashboard_stats():
                 "Reads dashboard.html from disk and returns it as a web page.")
 async def dashboard_page():
     """Serve the dashboard HTML directly from the API — no separate server needed."""
-    dash_path = Path(__file__).resolve().parent.parent / "dashboard" / "dashboard.html"
+    dash_path = FilePath(__file__).resolve().parent.parent / "dashboard" / "dashboard.html"
     if not dash_path.exists():
         raise HTTPException(404, "dashboard.html not found — deploy the dashboard/ folder")
     from fastapi.responses import HTMLResponse
