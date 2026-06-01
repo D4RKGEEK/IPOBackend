@@ -690,11 +690,11 @@ async def refresh(
                 mgr.update(tid, pct, label)
 
             mgr.update(tid, 0.05, "Starting scrape...")
-            asyncio.run(run_scrape(
+            scrape_result = asyncio.run(run_scrape(
                 year=year or 2026, sources=sources, progress_callback=on_progress,
             ))
-            mgr.update(tid, 1.0, "Complete")
-            return {"status": "ok", "message": "Scrape completed"}
+            mgr.update(tid, 1.0, f"Scraped {scrape_result.get('total_unique', 0)} IPOs, {scrape_result.get('new_ipos_found', 0)} new")
+            return scrape_result
         except Exception as e: mgr.fail(tid, str(e)); raise
 
     await run_in_background(task_id, _run)
