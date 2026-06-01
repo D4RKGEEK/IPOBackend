@@ -263,26 +263,42 @@ def _clean_headers_rows(headers: list[str], rows: list[list[str]]) -> Optional[d
     clean_headers = _keep(headers)
     clean_rows = [_keep(r) for r in (rows or [])]
 
+    # Helper: check if two columns never have data in the same data row
+    def _mutually_exclusive(ca: int, cb: int) -> bool:
+        if not clean_rows:
+            return False
+        for r in clean_rows:
+            a = r[ca].strip() if ca < len(r) else False
+            b = r[cb].strip() if cb < len(r) else False
+            if a and b:
+                return False  # same row has data in both columns → not exclusive
+        return True
+
     # Detect and merge shifted column pairs.
-    # Pattern: col A has data but no header, col B (adjacent) has header but no data.
-    # Merge: header from B, data from A for each pair.
+    # Pattern: col A has data but no header, col B (adjacent) has header but no data,
+    # and A and B are mutually exclusive across all data rows (no row has both).
     merged_idx = []
     i = 0
     while i < len(clean_headers):
         h_here = bool(clean_headers[i].strip())
         data_here = any(r[i].strip() for r in clean_rows if i < len(r)) if clean_rows else False
 
+        # Skip header-only column whose pair was already merged
         if h_here and not data_here and i > 0:
             prev_h = bool(clean_headers[i - 1].strip())
             prev_data = any(r[i - 1].strip() for r in clean_rows if i - 1 < len(r)) if clean_rows else False
-            if not prev_h and prev_data:
+            if not prev_h and prev_data and _mutually_exclusive(i - 1, i):
                 i += 1
                 continue
 
+        # Detect pair: col i has data but no header, col i+1 has header
+        # and NO data in any data row, AND they are mutually exclusive per-row.
+        # If col i+1 has data in some rows (alternating pattern, like BRLM index table),
+        # don't merge — both columns carry independent data.
         if not h_here and data_here and i + 1 < len(clean_headers):
             nxt_h = bool(clean_headers[i + 1].strip())
             nxt_data = any(r[i + 1].strip() for r in clean_rows if i + 1 < len(r)) if clean_rows else False
-            if nxt_h and not nxt_data:
+            if nxt_h and not nxt_data and _mutually_exclusive(i, i + 1):
                 clean_headers[i] = clean_headers[i + 1]
                 merged_idx.append(i)
                 i += 2
