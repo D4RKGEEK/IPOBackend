@@ -112,7 +112,15 @@ app = FastAPI(title="IPO Aggregation API", version="3.0.0", description=DESCRIPT
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ─── Services ─────────────────────────────────────────────────
-db_service = DatabaseService()
+# Lazy init — avoids blocking startup on slow Supabase connection
+class _LazyDB:
+    _instance: Optional[DatabaseService] = None
+    def __getattr__(self, name):
+        if _LazyDB._instance is None:
+            _LazyDB._instance = DatabaseService()
+        return getattr(_LazyDB._instance, name)
+
+db_service: DatabaseService = _LazyDB()  # type: ignore
 
 
 # ─── Health ───────────────────────────────────────────────────
