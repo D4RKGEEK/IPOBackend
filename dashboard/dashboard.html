@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IPO Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+      colors: {
+        groww: { 50: '#e6fffa', 100: '#b3ffe8', 200: '#80ffd6', 300: '#4dffc4', 400: '#1affb2', 500: '#00d09c', 600: '#00a87d', 700: '#00805e', 800: '#00583f', 900: '#003020' },
+        surface: { DEFAULT: '#f8f9fa', dark: '#0f1117' },
+        card: { DEFAULT: '#ffffff', dark: '#1a1d27' },
+        border: { DEFAULT: '#e5e7eb', dark: '#2d3142' },
+      }
+    }
+  }
+}
+</script>
+<style>
+  * { font-family: 'Inter', system-ui, sans-serif; }
+  body { background: #f8f9fa; }
+  .dark body { background: #0f1117; }
+  .stat-card { transition: all .2s ease; }
+  .stat-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,208,156,0.12); }
+  .groww-glow { box-shadow: 0 0 0 1px rgba(0,208,156,0.3); }
+  .groww-glow:hover { box-shadow: 0 0 0 2px rgba(0,208,156,0.5); }
+  .tab-btn.active { color: #00d09c; border-bottom-color: #00d09c; }
+  .dark .tab-btn.active { color: #00d09c; }
+  .dark body { background: #0f1117; }
+  .dark .card { background: #1a1d27; border-color: #2d3142; }
+  .dark .border-c { border-color: #2d3142; }
+  .dark .text-muted { color: #9ca3af; }
+  .dark .text-primary { color: #f3f4f6; }
+  .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  .skeleton { background: linear-gradient(90deg, #e5e7eb 25%, #f3f4f6 50%, #e5e7eb 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 6px; }
+  .dark .skeleton { background: linear-gradient(90deg, #2d3142 25%, #1a1d27 50%, #2d3142 75%); background-size: 200% 100%; }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+  .slide-panel { transition: transform .3s cubic-bezier(.4,0,.2,1); }
+  .slide-panel.open { transform: translateX(0); }
+  .toast { animation: toastIn .3s ease, toastOut .3s ease 2.7s forwards; }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateY(-12px); } }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+  .dark ::-webkit-scrollbar-thumb { background: #374151; }
+  table th { position: sticky; top: 0; z-index: 10; }
+  .dark table th { background: #1a1d27; }
+  input:focus, select:focus { outline: none; border-color: #00d09c; box-shadow: 0 0 0 2px rgba(0,208,156,0.15); }
+</style>
+</head>
+<body class="antialiased text-gray-900 dark:text-gray-100 min-h-screen">
+
+<!-- Toast container -->
+<div id="toastContainer" class="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none"></div>
+
+<!-- Slide Panel -->
+<div id="slidePanel" class="slide-panel fixed top-0 right-0 h-full w-[520px] max-w-[90vw] bg-white dark:bg-[#1a1d27] shadow-2xl z-50 transform translate-x-full overflow-y-auto border-l border-gray-200 dark:border-gray-700">
+  <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between sticky top-0 bg-white dark:bg-[#1a1d27] z-10">
+    <h2 id="panelTitle" class="text-lg font-bold truncate">Detail</h2>
+    <button onclick="closePanel()" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">&times;</button>
+  </div>
+  <div id="panelContent" class="p-4"></div>
+</div>
+<div id="panelOverlay" class="fixed inset-0 bg-black/30 z-40 hidden" onclick="closePanel()"></div>
+
+<!-- Header -->
+<header class="sticky top-0 z-30 bg-white dark:bg-[#1a1d27] border-b border-gray-200 dark:border-gray-700 shadow-sm">
+  <div class="max-w-[1600px] mx-auto px-4 h-14 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-[#00d09c] flex items-center justify-center text-white font-bold text-sm">I</div>
+      <span class="font-bold text-base">IPO Dashboard</span>
+      <span id="apiBadge" class="badge bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-[10px]">localhost:8001</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick="toggleRefresh()" id="refreshBtn" class="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center gap-1.5">
+        <span id="refreshIcon">&#x21bb;</span> <span id="refreshLabel">Auto</span>
+      </button>
+      <button onclick="toggleDark()" id="darkBtn" class="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">&#x263D;</button>
+      <button onclick="refreshAll()" class="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800" title="Refresh all data">&#x21bb;</button>
+    </div>
+  </div>
+</header>
+
+<!-- Main -->
+<main class="max-w-[1600px] mx-auto px-4 py-5">
+
+<!-- Stats Bar -->
+<div id="statsBar" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3 mb-6">
+  <div class="skeleton h-20 rounded-xl"></div><div class="skeleton h-20 rounded-xl"></div>
+  <div class="skeleton h-20 rounded-xl"></div><div class="skeleton h-20 rounded-xl"></div>
+  <div class="skeleton h-20 rounded-xl"></div><div class="skeleton h-20 rounded-xl"></div>
+  <div class="skeleton h-20 rounded-xl"></div><div class="skeleton h-20 rounded-xl"></div>
+</div>
+
+<!-- Tabs -->
+<div class="flex border-b border-gray-200 dark:border-gray-700 gap-0 mb-6 overflow-x-auto">
+  <button class="tab-btn active px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap" data-tab="overview">Overview</button>
+  <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap" data-tab="ipos">IPOs</button>
+  <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap" data-tab="review">Review Queue</button>
+  <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap" data-tab="activity">Activity</button>
+  <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap" data-tab="admin">Admin</button>
+  <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap" data-tab="system">System</button>
+  <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 whitespace-nowrap" data-tab="compare">Compare</button>
+</div>
+
+<!-- Tab Contents -->
+<div id="tabOverview" class="tab-content block">
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
+    <div class="lg:col-span-2 card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+      <h3 class="font-semibold text-sm mb-3">IPO Pipeline</h3>
+      <div id="pipelineChart" class="flex items-end gap-2 h-48"><div class="skeleton w-full h-48 rounded-lg"></div></div>
+    </div>
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+      <h3 class="font-semibold text-sm mb-3">Platform Split</h3>
+      <div id="platformChart" class="flex items-center justify-center h-48"><div class="skeleton w-full h-48 rounded-lg"></div></div>
+    </div>
+  </div>
+  <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-semibold text-sm">Recent IPOs</h3>
+      <button onclick="switchTab('ipos')" class="text-xs text-[#00d09c] hover:underline">View all</button>
+    </div>
+    <div id="recentIposList"><div class="skeleton h-32 rounded-lg"></div></div>
+  </div>
+</div>
+
+<div id="tabIpos" class="tab-content hidden">
+  <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+    <div class="flex flex-col sm:flex-row gap-3 mb-4">
+      <input id="ipoSearch" placeholder="Search company..." class="flex-1 px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-transparent">
+      <select id="ipoStatusFilter" class="px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-transparent"><option value="all">All Status</option></select>
+      <select id="ipoYearFilter" class="px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-transparent"><option value="">All Years</option></select>
+      <select id="ipoPlatformFilter" class="px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-transparent"><option value="all">All Platforms</option></select>
+      <button onclick="fetchIpos()" class="px-4 py-2 text-sm font-medium rounded-lg bg-[#00d09c] text-white hover:bg-[#00a87d]">Search</button>
+    </div>
+    <div class="overflow-x-auto"><table class="w-full text-sm" id="ipoTable"><thead><tr class="border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400 uppercase"><th class="text-left py-2 px-2 font-medium"><input type="checkbox" id="selectAll"></th><th class="text-left py-2 px-2 font-medium cursor-pointer" onclick="sortIpos('company_name')">Company</th><th class="text-left py-2 px-2 font-medium cursor-pointer" onclick="sortIpos('status')">Status</th><th class="text-left py-2 px-2 font-medium cursor-pointer" onclick="sortIpos('open_date')">Open</th><th class="text-left py-2 px-2 font-medium cursor-pointer" onclick="sortIpos('close_date')">Close</th><th class="text-right py-2 px-2 font-medium">Price Band</th><th class="text-center py-2 px-2 font-medium">Docs</th><th class="text-center py-2 px-2 font-medium">Conf</th><th class="text-center py-2 px-2 font-medium">Actions</th></tr></thead><tbody id="ipoBody"></tbody></table></div>
+    <div class="flex items-center justify-between mt-3 text-xs text-gray-500">
+      <span id="ipoCount">0 IPOs</span>
+      <div class="flex gap-2">
+        <button id="prevPage" onclick="changePage(-1)" class="px-3 py-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-30" disabled>Prev</button>
+        <span id="pageInfo" class="py-1">Page 1</span>
+        <button id="nextPage" onclick="changePage(1)" class="px-3 py-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-30">Next</button>
+      </div>
+    </div>
+  </div>
+  <!-- Batch actions bar -->
+  <div id="batchBar" class="hidden mt-3 p-3 rounded-xl border border-[#00d09c]/30 bg-[#00d09c]/5 flex items-center gap-3 text-sm">
+    <span id="selectedCount">0 selected</span>
+    <button onclick="batchAction('resolve')" class="px-3 py-1.5 text-xs rounded-lg bg-[#00d09c] text-white hover:bg-[#00a87d]">Resolve</button>
+    <button onclick="batchAction('parse')" class="px-3 py-1.5 text-xs rounded-lg bg-[#00d09c] text-white hover:bg-[#00a87d]">Parse (Firecrawl)</button>
+    <button onclick="batchAction('approve')" class="px-3 py-1.5 text-xs rounded-lg bg-green-600 text-white hover:bg-green-700">Publish</button>
+    <button onclick="batchAction('delete')" class="px-3 py-1.5 text-xs rounded-lg bg-red-500 text-white hover:bg-red-600">Delete</button>
+    <button onclick="clearSelection()" class="px-3 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">Clear</button>
+  </div>
+</div>
+
+<div id="tabReview" class="tab-content hidden">
+  <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+    <div class="flex items-center gap-3 mb-4">
+      <select id="reviewFilter" class="px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-transparent"><option value="needs_review">Needs Review</option><option value="rejected">Rejected</option><option value="published">Published</option><option value="pending">Pending</option></select>
+      <span id="reviewCount" class="text-xs text-gray-500"></span>
+    </div>
+    <div class="overflow-x-auto"><table class="w-full text-sm" id="reviewTable"><thead><tr class="border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 uppercase"><th class="text-left py-2 px-2">Company</th><th class="text-center py-2 px-2">Confidence</th><th class="text-left py-2 px-2">Issues</th><th class="text-left py-2 px-2">Updated</th><th class="text-center py-2 px-2">Actions</th></tr></thead><tbody id="reviewBody"></tbody></table></div>
+  </div>
+</div>
+
+<div id="tabActivity" class="tab-content hidden">
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+      <h3 class="font-semibold text-sm mb-3">Status Changes</h3>
+      <div id="statusChangesFeed"><div class="skeleton h-40 rounded-lg"></div></div>
+    </div>
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+      <h3 class="font-semibold text-sm mb-3">Scraper Logs</h3>
+      <div id="scraperLogsFeed"><div class="skeleton h-40 rounded-lg"></div></div>
+    </div>
+    <div class="lg:col-span-2 card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+      <h3 class="font-semibold text-sm mb-3">Background Tasks</h3>
+      <div id="tasksFeed"><div class="skeleton h-32 rounded-lg"></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="tabAdmin" class="tab-content hidden">
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+      <h3 class="font-semibold text-sm mb-4">Operations</h3>
+      <div class="space-y-3">
+        <button onclick="triggerScrape()" class="w-full px-4 py-2.5 text-sm font-medium rounded-lg bg-[#00d09c] text-white hover:bg-[#00a87d]">&#x21bb; Full Re-Scrape (all sources)</button>
+        <button onclick="triggerScrape2026()" class="w-full px-4 py-2.5 text-sm font-medium rounded-lg border border-[#00d09c] text-[#00d09c] hover:bg-[#00d09c]/5">&#x21bb; Re-Scrape 2026 Only</button>
+        <button onclick="testNotifications()" class="w-full px-4 py-2.5 text-sm font-medium rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">Test Notifications</button>
+        <button onclick="clearDb()" class="w-full px-4 py-2.5 text-sm font-medium rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100">&#x26A0; Clear Database</button>
+      </div>
+    </div>
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+      <h3 class="font-semibold text-sm mb-4">Quick IPO Editor</h3>
+      <div class="space-y-2 text-sm">
+        <input id="editIpoId" type="number" placeholder="IPO ID..." class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-transparent">
+        <input id="editCompany" placeholder="Company Name" class="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-transparent">
+        <div class="grid grid-cols-2 gap-2">
+          <select id="editStatus" class="px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-transparent"><option value="">-- Status --</option><option value="FILED">Filed</option><option value="DRHP">DRHP</option><option value="RHP">RHP</option><option value="UPCOMING">Upcoming</option><option value="OPEN">Open</option><option value="CLOSED">Closed</option><option value="LISTED">Listed</option></select>
+          <input id="editPriceBand" placeholder="Price Band" class="px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-transparent">
+        </div>
+        <button onclick="quickEditIpo()" class="w-full px-4 py-2 text-sm font-medium rounded-lg bg-[#00d09c] text-white hover:bg-[#00a87d]">Update IPO</button>
+        <div id="editResult" class="text-xs text-gray-500"></div>
+      </div>
+    </div>
+    <div class="lg:col-span-2 card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+      <h3 class="font-semibold text-sm mb-3">Task Queue</h3>
+      <div id="tasksAdminList"><div class="skeleton h-24 rounded-lg"></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="tabSystem" class="tab-content hidden">
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-5" id="systemMetrics">
+    <div class="skeleton h-32 rounded-xl"></div><div class="skeleton h-32 rounded-xl"></div><div class="skeleton h-32 rounded-xl"></div>
+  </div>
+  <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+    <h3 class="font-semibold text-sm mb-3">Database Tables</h3>
+    <div id="dbTablesInfo"><div class="skeleton h-24 rounded-lg"></div></div>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+      <h3 class="font-semibold text-sm mb-3">Service Health</h3>
+      <div id="serviceHealth"><div class="skeleton h-32 rounded-lg"></div></div>
+    </div>
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+      <h3 class="font-semibold text-sm mb-3">Configuration</h3>
+      <div id="configInfo"><div class="skeleton h-32 rounded-lg"></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="tabCompare" class="tab-content hidden">
+  <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-5">
+    <h3 class="font-semibold text-sm mb-3">Compare IPOs</h3>
+    <div class="flex gap-2 mb-4">
+      <input id="compareId1" type="number" placeholder="IPO ID 1" class="flex-1 px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-transparent">
+      <input id="compareId2" type="number" placeholder="IPO ID 2" class="flex-1 px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-transparent">
+      <input id="compareId3" type="number" placeholder="IPO ID 3" class="flex-1 px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-transparent">
+      <button onclick="compareIpos()" class="px-4 py-2 text-sm font-medium rounded-lg bg-[#00d09c] text-white hover:bg-[#00a87d]">Compare</button>
+    </div>
+    <div id="compareResults" class="overflow-x-auto"></div>
+  </div>
+</div>
+
+</main>
+
+<script>
+// ─── STATE ──────────────────────────────────────────────────────────
+const STATE = {
+  apiBase: localStorage.getItem('apiBase') || 'https://ipobackend-production.up.railway.app',
+  ipos: [], page: 1, perPage: 25, total: 0, sortCol: '', sortDir: 'asc',
+  selected: new Set(), autoRefresh: false, refreshInterval: null,
+  system: null, statuses: [], reviewData: [],
+};
+const DASHBOARD_API = '';
+
+// ─── TOAST ──────────────────────────────────────────────────────────
+function toast(msg, type='success') {
+  const c = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = 'toast pointer-events-auto px-4 py-2.5 rounded-lg text-sm font-medium shadow-lg ' +
+    (type === 'success' ? 'bg-[#00d09c] text-white' : type === 'error' ? 'bg-red-500 text-white' : 'bg-gray-800 text-white');
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+// ─── DARK MODE ──────────────────────────────────────────────────────
+function toggleDark() {
+  document.documentElement.classList.toggle('dark');
+  localStorage.setItem('dark', document.documentElement.classList.contains('dark'));
+}
+if (localStorage.getItem('dark') === 'true' || (!localStorage.getItem('dark') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+  document.documentElement.classList.add('dark');
+}
+
+// ─── TABS ───────────────────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+  document.querySelector(`.tab-btn[data-tab="${name}"]`)?.classList.add('active');
+  document.getElementById(`tab${name.charAt(0).toUpperCase()+name.slice(1)}`).classList.remove('hidden');
+  if (name === 'system') fetchSystemUsage();
+  if (name === 'review') fetchReviewQueue();
+  if (name === 'activity') fetchActivity();
+  if (name === 'admin') fetchTasks();
+}
+
+// ─── API HELPERS ────────────────────────────────────────────────────
+async function apiGet(path) {
+  const url = path.startsWith('/') ? STATE.apiBase + path : DASHBOARD_API + path;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+async function apiPost(path, body) {
+  const url = path.startsWith('/') ? STATE.apiBase + path : DASHBOARD_API + path;
+  const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+async function apiPatch(path, body) {
+  const url = path.startsWith('/') ? STATE.apiBase + path : DASHBOARD_API + path;
+  const res = await fetch(url, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+async function apiDelete(path) {
+  const url = path.startsWith('/') ? STATE.apiBase + path : DASHBOARD_API + path;
+  const res = await fetch(url, { method: 'DELETE' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// ─── REFRESH ────────────────────────────────────────────────────────
+function toggleRefresh() {
+  STATE.autoRefresh = !STATE.autoRefresh;
+  document.getElementById('refreshLabel').textContent = STATE.autoRefresh ? 'ON' : 'Auto';
+  document.getElementById('refreshBtn').className = STATE.autoRefresh
+    ? 'px-2.5 py-1.5 text-xs rounded-lg bg-[#00d09c]/10 border border-[#00d09c]/30 text-[#00d09c]'
+    : 'px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800';
+  if (STATE.autoRefresh) {
+    STATE.refreshInterval = setInterval(refreshAll, 30000);
+  } else {
+    clearInterval(STATE.refreshInterval);
+  }
+}
+async function refreshAll() {
+  await Promise.all([fetchStats(), fetchIpos()]);
+}
+
+// ─── FETCH STATS ────────────────────────────────────────────────────
+async function fetchStats() {
+  try {
+    const stats = await apiGet('/api/dashboard/stats');
+    renderStats(stats);
+    renderPipeline(stats);
+  } catch(e) { document.getElementById('statsBar').innerHTML = `<div class="col-span-full text-center text-sm text-red-500 py-4">Failed to load stats: ${e.message}</div>`; }
+}
+
+function renderStats(stats) {
+  const byStatus = stats.by_status || stats.ipos_by_status || {};
+  const total = stats.total_ipos || 0;
+  const statuses = Object.entries(byStatus).sort((a,b) => b[1]-a[1]);
+  STATE.statuses = statuses;
+
+  const statusCards = statuses.slice(0, 4).map(([s,c]) => {
+    const color = s === 'LISTED' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+      : s === 'OPEN' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+      : s === 'UPCOMING' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+      : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
+    return `<div class="stat-card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-3.5 flex flex-col"><span class="text-2xl font-bold">${c}</span><span class="text-xs text-gray-500 dark:text-gray-400 mt-0.5"><span class="badge ${color}">${s}</span></span></div>`;
+  }).join('');
+  document.getElementById('statsBar').innerHTML = `
+    <div class="stat-card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-3.5 flex flex-col col-span-1">
+      <span class="text-2xl font-bold">${total}</span>
+      <span class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Total IPOs</span>
+    </div>
+    ${statusCards}
+    <div class="stat-card rounded-xl border border-[#00d09c]/20 bg-[#00d09c]/5 dark:bg-[#00d09c]/10 p-3.5 flex flex-col">
+      <span class="text-lg font-bold text-[#00d09c]">${(stats.avg_confidence || 0)*100}%</span>
+      <span class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Avg Confidence</span>
+    </div>
+  `;
+}
+
+function renderPipeline(stats) {
+  const byStatus = stats.by_status || stats.ipos_by_status || {};
+  const order = ['FILED','DRHP','RHP','UPCOMING','OPEN','CLOSED','LISTED'];
+  const maxCount = Math.max(...order.map(s => byStatus[s]||0), 1);
+  document.getElementById('pipelineChart').innerHTML = order.map(s => {
+    const count = byStatus[s] || 0;
+    const pct = (count / maxCount) * 100;
+    const color = s === 'LISTED' ? 'bg-green-500' : s === 'OPEN' ? 'bg-amber-500' : s === 'UPCOMING' ? 'bg-blue-500' : 'bg-gray-400 dark:bg-gray-600';
+    return `<div class="flex-1 flex flex-col items-center justify-end h-48 gap-1"><div class="w-full max-w-[40px] rounded-t-md ${color}" style="height:${Math.max(pct,4)}%"></div><span class="text-[10px] font-medium text-gray-500 dark:text-gray-400">${s}</span><span class="text-xs font-bold">${count}</span></div>`;
+  }).join('');
+}
+
+// ─── FETCH IPOS ─────────────────────────────────────────────────────
+async function fetchIpos() {
+  const search = document.getElementById('ipoSearch')?.value || '';
+  const status = document.getElementById('ipoStatusFilter')?.value || 'all';
+  const year = document.getElementById('ipoYearFilter')?.value || '';
+  const platform = document.getElementById('ipoPlatformFilter')?.value || 'all';
+  const params = new URLSearchParams({ page: STATE.page, per_page: STATE.perPage, status, platform, search });
+  if (year) params.set('year', year);
+  try {
+    const data = await apiGet(`/api/ipos?${params}`);
+    STATE.ipos = data.data || [];
+    STATE.total = data.pagination?.total_records || 0;
+    renderIpoTable();
+  } catch(e) { document.getElementById('ipoBody').innerHTML = `<tr><td colspan="9" class="text-center text-red-500 py-8">${e.message}</td></tr>`; }
+}
+
+function renderIpoTable() {
+  const tbody = document.getElementById('ipoBody');
+  if (!STATE.ipos.length) { tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-400 py-8">No IPOs found</td></tr>'; updateIpoPagination(); return; }
+  tbody.innerHTML = STATE.ipos.map(ipo => {
+    const statusColor = ipo.status === 'LISTED' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+      : ipo.status === 'OPEN' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+      : ipo.status === 'UPCOMING' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+      : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
+    const docs = ipo.documents || {};
+    const hasDrhp = docs.drhp ? '<span class="text-green-500" title="DRHP">&#x2713;</span>' : '<span class="text-gray-300">-</span>';
+    const hasRhp = docs.rhp ? '<span class="text-green-500" title="RHP">&#x2713;</span>' : '<span class="text-gray-300">-</span>';
+    const hasFp = docs.final_prospectus ? '<span class="text-green-500" title="FP">&#x2713;</span>' : '<span class="text-gray-300">-</span>';
+    const conf = ipo.data_confidence || 0;
+    const sel = STATE.selected.has(ipo.id) ? 'checked' : '';
+    return `<tr class="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer" onclick="openIpoDetail(${ipo.id})">
+      <td class="py-2.5 px-2" onclick="event.stopPropagation()"><input type="checkbox" ${sel} onchange="toggleSelect(${ipo.id})"></td>
+      <td class="py-2.5 px-2 font-medium text-sm">${ipo.company_name}</td>
+      <td class="py-2.5 px-2"><span class="badge ${statusColor}">${ipo.status}</span></td>
+      <td class="py-2.5 px-2 text-xs text-gray-500">${ipo.dates?.open || '-'}</td>
+      <td class="py-2.5 px-2 text-xs text-gray-500">${ipo.dates?.close || '-'}</td>
+      <td class="py-2.5 px-2 text-xs text-right">${ipo.price_band || '-'}</td>
+      <td class="py-2.5 px-2 text-center text-xs">${hasDrhp} ${hasRhp} ${hasFp}</td>
+      <td class="py-2.5 px-2 text-center"><span class="text-xs ${conf > 0.7 ? 'text-green-500' : conf > 0.3 ? 'text-amber-500' : 'text-red-500'}">${Math.round(conf*100)}%</span></td>
+      <td class="py-2.5 px-2 text-center" onclick="event.stopPropagation()">
+        <div class="flex gap-1 justify-center">
+          <button onclick="quickAction(${ipo.id},'resolve')" class="px-2 py-1 text-[10px] rounded bg-gray-100 dark:bg-gray-800 hover:bg-gray-200" title="Resolve">R</button>
+          <button onclick="quickAction(${ipo.id},'parse')" class="px-2 py-1 text-[10px] rounded bg-gray-100 dark:bg-gray-800 hover:bg-gray-200" title="Parse">P</button>
+          <button onclick="quickAction(${ipo.id},'detail')" class="px-2 py-1 text-[10px] rounded bg-gray-100 dark:bg-gray-800 hover:bg-gray-200" title="Open">&#x2197;</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+  document.getElementById('ipoCount').textContent = `${STATE.total} IPOs (page ${STATE.page})`;
+  updateIpoPagination();
+}
+
+function updateIpoPagination() {
+  const totalPages = Math.max(1, Math.ceil(STATE.total / STATE.perPage));
+  document.getElementById('pageInfo').textContent = `Page ${STATE.page} of ${totalPages}`;
+  document.getElementById('prevPage').disabled = STATE.page <= 1;
+  document.getElementById('nextPage').disabled = STATE.page >= totalPages;
+}
+function changePage(delta) {
+  STATE.page = Math.max(1, STATE.page + delta);
+  fetchIpos();
+}
+function sortIpos(col) {
+  if (STATE.sortCol === col) STATE.sortDir = STATE.sortDir === 'asc' ? 'desc' : 'asc';
+  else { STATE.sortCol = col; STATE.sortDir = 'asc'; }
+  fetchIpos();
+}
+
+function toggleSelect(id) {
+  if (STATE.selected.has(id)) STATE.selected.delete(id); else STATE.selected.add(id);
+  renderIpoTable();
+  document.getElementById('batchBar').classList.toggle('hidden', STATE.selected.size === 0);
+  document.getElementById('selectedCount').textContent = `${STATE.selected.size} selected`;
+}
+function clearSelection() {
+  STATE.selected.clear();
+  document.getElementById('batchBar').classList.add('hidden');
+  renderIpoTable();
+}
+
+async function quickAction(id, action) {
+  if (action === 'resolve') { await apiPost(`/api/ipos/${id}/resolve`); toast(`Resolve started for IPO #${id}`); }
+  else if (action === 'parse') { await apiPost(`/api/ipos/${id}/parse-firecrawl`); toast(`Parse started for IPO #${id}`); }
+  else if (action === 'detail') { openIpoDetail(id); }
+}
+
+async function batchAction(action) {
+  const ids = [...STATE.selected];
+  for (const id of ids) {
+    try {
+      if (action === 'resolve') { await apiPost(`/api/ipos/${id}/resolve`); toast(`Resolve started for #${id}`); }
+      else if (action === 'parse') { await apiPost(`/api/ipos/${id}/parse-firecrawl`); toast(`Parse started for #${id}`); }
+      else if (action === 'approve') { await fetch(DASHBOARD_API+`/api/ipos/${id}/publish-status`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({publish_status:'published'})}); toast(`Published #${id}`); }
+      else if (action === 'delete') { if (confirm(`Delete IPO #${id}?`)) { await apiDelete(`/api/ipos/${id}/delete`); toast(`Deleted IPO #${id}`); } }
+    } catch(e) { toast(`Failed on #${id}: ${e.message}`, 'error'); }
+  }
+  clearSelection();
+  fetchIpos();
+}
+
+// ─── IPO DETAIL PANEL ──────────────────────────────────────────────
+async function openIpoDetail(id) {
+  document.getElementById('panelOverlay').classList.remove('hidden');
+  document.getElementById('slidePanel').classList.add('open');
+  document.getElementById('panelTitle').textContent = `IPO #${id}`;
+  document.getElementById('panelContent').innerHTML = '<div class="skeleton h-48 rounded-lg"></div>';
+  try {
+    const ipo = await apiGet(`/api/ipos/${id}`);
+    renderPanel(ipo);
+  } catch(e) {
+    document.getElementById('panelContent').innerHTML = `<p class="text-red-500 text-sm">Error: ${e.message}</p>`;
+  }
+}
+function closePanel() {
+  document.getElementById('panelOverlay').classList.add('hidden');
+  document.getElementById('slidePanel').classList.remove('open');
+}
+
+function renderPanel(ipo) {
+  const d = ipo.dates || {};
+  const docs = ipo.documents || {};
+  const statusColor = ipo.status === 'LISTED' ? 'bg-green-100 text-green-700' : ipo.status === 'OPEN' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700';
+  document.getElementById('panelContent').innerHTML = `
+    <div class="space-y-4">
+      <div class="flex items-center gap-2"><h3 class="text-lg font-bold">${ipo.company_name}</h3><span class="badge ${statusColor}">${ipo.status}</span></div>
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div><span class="text-gray-500 text-xs">Open</span><p>${d.open || '-'}</p></div>
+        <div><span class="text-gray-500 text-xs">Close</span><p>${d.close || '-'}</p></div>
+        <div><span class="text-gray-500 text-xs">Price Band</span><p>${ipo.price_band || '-'}</p></div>
+        <div><span class="text-gray-500 text-xs">Platform</span><p>${ipo.platform || '-'}</p></div>
+        <div><span class="text-gray-500 text-xs">DRHP Filed</span><p>${d.drhp_filed || '-'}</p></div>
+        <div><span class="text-gray-500 text-xs">RHP Filed</span><p>${d.rhp_filed || '-'}</p></div>
+      </div>
+      <div><h4 class="font-semibold text-xs mb-2">Documents</h4><div class="space-y-1 text-sm">${['drhp','rhp','final_prospectus'].map(t => `<div class="flex items-center justify-between py-1 px-2 rounded bg-gray-50 dark:bg-gray-800/50"><span class="text-xs font-medium uppercase">${t}</span>${docs[t] ? `<a href="${docs[t]}" target="_blank" class="text-[#00d09c] text-xs hover:underline">Open PDF</a>` : '<span class="text-gray-400 text-xs">Not available</span>'}</div>`).join('')}</div></div>
+      <div class="flex gap-2">
+        <button onclick="quickAction(${ipo.id},'resolve'); closePanel()" class="px-3 py-1.5 text-xs rounded-lg bg-[#00d09c] text-white hover:bg-[#00a87d]">Resolve</button>
+        <button onclick="quickAction(${ipo.id},'parse'); closePanel()" class="px-3 py-1.5 text-xs rounded-lg border border-[#00d09c] text-[#00d09c] hover:bg-[#00d09c]/5">Parse</button>
+      </div>
+    </div>`;
+}
+
+// ─── SYSTEM USAGE ──────────────────────────────────────────────────
+async function fetchSystemUsage() {
+  try {
+    const data = await apiGet('/api/system/usage');
+    STATE.system = data;
+    renderSystemUsage(data);
+  } catch(e) { document.getElementById('systemMetrics').innerHTML = `<div class="col-span-full text-red-500 text-sm">${e.message}</div>`; }
+}
+
+function renderSystemUsage(data) {
+  const ram = data.ram || {};
+  const cpu = data.cpu || {};
+  const disk = data.disk || {};
+  const db = data.database || {};
+  const r2 = data.r2 || {};
+  const fc = data.firecrawl || {};
+
+  const ramPct = ram.used_pct || 0;
+  const ramBar = ramPct > 80 ? 'bg-red-500' : ramPct > 50 ? 'bg-amber-500' : 'bg-[#00d09c]';
+
+  document.getElementById('systemMetrics').innerHTML = `
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-4">
+      <h4 class="text-xs font-semibold text-gray-500 mb-2">RAM</h4>
+      <p class="text-xl font-bold mb-1">${ram.used_mb || 0} / ${ram.total_mb || 0} MB</p>
+      <div class="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden"><div class="h-full ${ramBar} rounded-full transition-all" style="width:${ramPct}%"></div></div>
+      <p class="text-xs text-gray-500 mt-1">${ramPct}% used</p>
+    </div>
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-4">
+      <h4 class="text-xs font-semibold text-gray-500 mb-2">CPU Load</h4>
+      <p class="text-xl font-bold mb-1">${cpu.load_1m || 0}</p>
+      <p class="text-xs text-gray-500">1m: ${cpu.load_1m || 0} &middot; 5m: ${cpu.load_5m || 0} &middot; 15m: ${cpu.load_15m || 0}</p>
+      <p class="text-xs text-gray-500 mt-2">Uptime: ${formatUptime(data.uptime_seconds || 0)}</p>
+    </div>
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-4">
+      <h4 class="text-xs font-semibold text-gray-500 mb-2">Disk</h4>
+      <p class="text-xl font-bold mb-1">${disk.used || '?'} / ${disk.size || '?'}</p>
+      <div class="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden"><div class="h-full bg-blue-500 rounded-full" style="width:${disk.used_pct || 0}%"></div></div>
+      <p class="text-xs text-gray-500 mt-1">${disk.used_pct || 0}% used</p>
+    </div>
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-4">
+      <h4 class="text-xs font-semibold text-gray-500 mb-2">Database</h4>
+      <p class="text-xl font-bold mb-1">${db.size_mb || 0} MB</p>
+      <p class="text-xs text-gray-500">${db.tables ? Object.entries(db.tables).length + ' tables' : ''}</p>
+      <p class="text-xs text-gray-500 mt-1">Dialect: ${data.config?.db_dialect || '?'}</p>
+    </div>
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-4">
+      <h4 class="text-xs font-semibold text-gray-500 mb-2">R2 Storage</h4>
+      <p class="text-xl font-bold mb-1">${r2.size_mb || '?'} MB</p>
+      <p class="text-xs text-gray-500">${r2.object_count || 0} objects</p>
+      ${r2.bucket ? `<p class="text-xs text-gray-500 mt-1">Bucket: ${r2.bucket}</p>` : ''}
+    </div>
+    <div class="card rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a1d27] p-4">
+      <h4 class="text-xs font-semibold text-gray-500 mb-2">Firecrawl</h4>
+      ${fc.credits_remaining !== undefined ? `<p class="text-xl font-bold mb-1">${fc.credits_remaining}</p><p class="text-xs text-gray-500">Credits remaining</p><p class="text-xs text-gray-500">Used: ${fc.credits_used || 0}</p>` : `<p class="text-sm text-amber-500">${fc.error || 'Not available'}</p>`}
+      ${fc.plan ? `<span class="badge mt-2 bg-blue-100 text-blue-700">${fc.plan}</span>` : ''}
+    </div>
+  `;
+
+  // DB tables
+  const tables = db.tables || {};
+  document.getElementById('dbTablesInfo').innerHTML = Object.keys(tables).length
+    ? `<table class="w-full text-sm"><thead><tr class="text-xs text-gray-500 border-b border-gray-200 dark:border-gray-700"><th class="text-left py-2 px-2">Table</th><th class="text-right py-2 px-2">Rows</th></tr></thead><tbody>${Object.entries(tables).map(([t,c]) => `<tr class="border-b border-gray-100 dark:border-gray-800"><td class="py-1.5 px-2">${t}</td><td class="py-1.5 px-2 text-right">${c}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="text-sm text-gray-500">No table data</p>';
+
+  // Service health
+  document.getElementById('serviceHealth').innerHTML = '<div id="healthContent"><div class="skeleton h-24 rounded-lg"></div></div>';
+  fetchMainHealth();
+
+  // Config
+  const cfg = data.config || {};
+  document.getElementById('configInfo').innerHTML = `<table class="w-full text-sm"><tbody>${Object.entries(cfg).map(([k,v]) => `<tr class="border-b border-gray-100 dark:border-gray-800"><td class="py-1.5 px-2 text-xs text-gray-500">${k}</td><td class="py-1.5 px-2 text-xs">${v === true ? '<span class="text-green-500">&#x2713;</span>' : v === false ? '<span class="text-red-500">&#x2717;</span>' : v}</td></tr>`).join('')}</tbody></table>`;
+}
+
+async function fetchMainHealth() {
+  try {
+    const h = await apiGet('/health?deep=true');
+    const checks = h.checks || {};
+    document.getElementById('healthContent').innerHTML = `<table class="w-full text-sm"><tbody>${Object.entries(checks).map(([k,v]) => {
+      const ok = v.ok === true || (v.ok !== false && !v.error && !v.skipped);
+      const skipped = v.skipped;
+      return `<tr class="border-b border-gray-100 dark:border-gray-800"><td class="py-1.5 px-2 text-xs">${k}</td><td class="py-1.5 px-2 text-xs text-right">${skipped ? '<span class="text-gray-400">skipped</span>' : ok ? '<span class="text-green-500">&#x2713; OK</span>' : `<span class="text-red-500">&#x2717; ${v.error?.substring(0,40) || ''}</span>`}</td></tr>`;
+    }).join('')}</tbody></table>`;
+  } catch(e) { document.getElementById('healthContent').innerHTML = `<p class="text-red-500 text-sm">${e.message}</p>`; }
+}
+
+function formatUptime(s) {
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return `${d}d ${h}h ${m}m`;
+}
+
+// ─── REVIEW QUEUE ──────────────────────────────────────────────────
+async function fetchReviewQueue() {
+  const ps = document.getElementById('reviewFilter')?.value || 'needs_review';
+  try {
+    const data = await apiGet(`/api/review-queue?publish_status=${ps}`);
+    STATE.reviewData = data.ipos || [];
+    renderReviewQueue(STATE.reviewData);
+  } catch(e) { document.getElementById('reviewBody').innerHTML = `<tr><td colspan="5" class="text-center text-red-500 py-8">${e.message}</td></tr>`; }
+}
+
+function renderReviewQueue(ipos) {
+  document.getElementById('reviewCount').textContent = `${ipos.length} IPOs`;
+  const tbody = document.getElementById('reviewBody');
+  if (!ipos.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400 py-8">All clear — nothing to review</td></tr>'; return; }
+  tbody.innerHTML = ipos.map(ipo => {
+    const issues = ipo.validation_issues || [];
+    const conf = ipo.confidence_score || 0;
+    return `<tr class="border-b border-gray-100 dark:border-gray-800">
+      <td class="py-2.5 px-2 text-sm font-medium">${ipo.company_name} <span class="text-xs text-gray-400">#${ipo.ipo_id}</span></td>
+      <td class="py-2.5 px-2 text-center"><span class="text-sm font-bold ${conf > 0.7 ? 'text-green-500' : conf > 0.3 ? 'text-amber-500' : 'text-red-500'}">${Math.round(conf*100)}%</span></td>
+      <td class="py-2.5 px-2 text-xs max-w-[200px] truncate">${issues.length ? issues.join(', ') : 'None'}</td>
+      <td class="py-2.5 px-2 text-xs text-gray-500">${ipo.unified_updated_at ? new Date(ipo.unified_updated_at).toLocaleString() : '-'}</td>
+      <td class="py-2.5 px-2 text-center">
+        <div class="flex gap-1 justify-center">
+          <button onclick="reviewAction(${ipo.ipo_id},'published')" class="px-2 py-1 text-[10px] rounded bg-green-100 text-green-700 hover:bg-green-200">Approve</button>
+          <button onclick="reviewAction(${ipo.ipo_id},'rejected')" class="px-2 py-1 text-[10px] rounded bg-red-100 text-red-600 hover:bg-red-200">Reject</button>
+          <button onclick="quickAction(${ipo.ipo_id},'parse')" class="px-2 py-1 text-[10px] rounded bg-blue-100 text-blue-700 hover:bg-blue-200">Re-parse</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function reviewAction(id, status) {
+  try {
+    await fetch(DASHBOARD_API+`/api/ipos/${id}/publish-status`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({publish_status: status})
+    });
+    toast(`IPO #${id} marked as ${status}`);
+    fetchReviewQueue();
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+document.getElementById('reviewFilter')?.addEventListener('change', fetchReviewQueue);
+
+// ─── ACTIVITY ──────────────────────────────────────────────────────
+async function fetchActivity() {
+  try {
+    const [changes, logs, tasks] = await Promise.all([
+      apiGet('/api/status-changes?limit=30'),
+      apiGet('/api/dashboard/logs?limit=20'),
+      apiGet('/api/tasks?limit=20'),
+    ]);
+    renderStatusChanges(changes || []);
+    renderScraperLogs(logs || []);
+    renderTasks(tasks?.tasks || []);
+  } catch(e) {
+    document.getElementById('statusChangesFeed').innerHTML = `<p class="text-red-500 text-sm">${e.message}</p>`;
+  }
+}
+
+function renderStatusChanges(changes) {
+  const el = document.getElementById('statusChangesFeed');
+  if (!changes.length) { el.innerHTML = '<p class="text-sm text-gray-500">No recent changes</p>'; return; }
+  el.innerHTML = changes.slice(0, 30).map(c => `
+    <div class="flex items-start gap-2 py-1.5 border-b border-gray-100 dark:border-gray-800 last:border-0">
+      <span class="text-xs text-gray-400 shrink-0 w-12">${c.change_date ? new Date(c.change_date).toLocaleDateString() : ''}</span>
+      <span class="text-xs font-medium truncate">${c.company_name || 'IPO'}</span>
+      <span class="text-xs text-gray-500">${c.old_status || '?'} &#x2192; <span class="font-medium text-[#00d09c]">${c.new_status}</span></span>
+    </div>`).join('');
+}
+
+function renderScraperLogs(logs) {
+  const el = document.getElementById('scraperLogsFeed');
+  if (!logs.length) { el.innerHTML = '<p class="text-sm text-gray-500">No recent logs</p>'; return; }
+  el.innerHTML = logs.slice(0, 20).map(l => `
+    <div class="flex items-start gap-2 py-1.5 border-b border-gray-100 dark:border-gray-800 last:border-0">
+      <span class="text-[10px] text-gray-400 shrink-0 w-14">${l.created_at ? new Date(l.created_at).toLocaleTimeString() : ''}</span>
+      <span class="badge ${l.level === 'ERROR' ? 'bg-red-100 text-red-700' : l.level === 'WARN' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}">${l.level || 'INFO'}</span>
+      <span class="text-xs text-gray-600 dark:text-gray-400 truncate">${l.message || ''}</span>
+    </div>`).join('');
+}
+
+function renderTasks(tasks) {
+  const el = document.getElementById('tasksFeed');
+  if (!tasks.length) { el.innerHTML = '<p class="text-sm text-gray-500">No recent tasks</p>'; return; }
+  el.innerHTML = `<table class="w-full text-sm"><thead><tr class="text-xs text-gray-500 border-b border-gray-200 dark:border-gray-700"><th class="text-left py-2 px-2">Task</th><th class="text-left py-2 px-2">Name</th><th class="text-center py-2 px-2">Progress</th><th class="text-right py-2 px-2">Action</th></tr></thead><tbody>${tasks.map(t => {
+    const pct = (t.progress || 0) * 100;
+    const running = t.status === 'running' || t.status === 'started';
+    return `<tr class="border-b border-gray-100 dark:border-gray-800"><td class="py-1.5 px-2 text-xs text-gray-500">${t.task_id?.substring(0,8) || '?'}</td><td class="py-1.5 px-2 text-xs">${t.name || t.description || '?'}</td><td class="py-1.5 px-2 text-center"><div class="flex items-center gap-2 justify-center"><div class="w-20 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden"><div class="h-full ${running ? 'bg-[#00d09c] animate-pulse' : 'bg-green-500'} rounded-full" style="width:${Math.max(pct,5)}%"></div></div><span class="text-[10px] text-gray-500">${Math.round(pct)}%</span></div></td><td class="py-1.5 px-2 text-right">${running ? `<button onclick="cancelTask('${t.task_id}')" class="text-[10px] px-2 py-0.5 rounded bg-red-50 text-red-600 hover:bg-red-100">Cancel</button>` : `<span class="text-[10px] text-gray-400">${t.status}</span>`}</td></tr>`;
+  }).join('')}</tbody></table>`;
+}
+
+async function cancelTask(id) {
+  try { await fetch(`/api/tasks/${id}/cancel`, {method:'POST'}); toast('Task cancelled'); fetchActivity(); }
+  catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+// ─── ADMIN ─────────────────────────────────────────────────────────
+async function triggerScrape() {
+  try { const r = await apiPost('/api/refresh', {sources:'all'}); toast(`Scrape started: ${r.task_id}`); }
+  catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+async function triggerScrape2026() {
+  try { await apiPost('/api/refresh', {sources:'all', year:2026}); toast('Scrape 2026 started'); }
+  catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+async function testNotifications() {
+  try { const r = await apiPost('/api/internal/notify/test'); toast('Notifications sent'); }
+  catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+async function clearDb() {
+  if (!confirm('WARNING: This clears ALL data. Are you sure?')) return;
+  if (!confirm('REALLY sure? This cannot be undone.')) return;
+  try { await apiPost('/api/clear-db'); toast('Database cleared'); fetchStats(); }
+  catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function quickEditIpo() {
+  const id = document.getElementById('editIpoId').value;
+  if (!id) { toast('Enter an IPO ID', 'error'); return; }
+  const params = new URLSearchParams();
+  ['company','status','priceBand','openDate','closeDate','drhpDate','rhpDate'].forEach(f => {
+    const el = document.getElementById('edit'+f.charAt(0).toUpperCase()+f.slice(1));
+  });
+  const updates = {};
+  const name = document.getElementById('editCompany')?.value;
+  const status = document.getElementById('editStatus')?.value;
+  const price = document.getElementById('editPriceBand')?.value;
+  if (name) updates.company_name = name;
+  if (status) updates.status = status;
+  if (price) updates.price_band = price;
+  try {
+    const params = new URLSearchParams(updates);
+    await apiPatch(`/api/ipos/${id}?${params}`);
+    toast(`IPO #${id} updated`);
+    document.getElementById('editResult').textContent = 'Updated: ' + JSON.stringify(updates);
+  } catch(e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
+async function fetchTasks() {
+  try {
+    const data = await apiGet('/api/tasks?limit=30');
+    const tasks = data.tasks || [];
+    document.getElementById('tasksAdminList').innerHTML = tasks.length
+      ? `<table class="w-full text-sm"><thead><tr class="text-xs text-gray-500 border-b border-gray-200 dark:border-gray-700"><th class="text-left py-2 px-2">ID</th><th class="text-left py-2 px-2">Name</th><th class="text-left py-2 px-2">Status</th><th class="text-right py-2 px-2">Progress</th></tr></thead><tbody>${tasks.map(t => `<tr class="border-b border-gray-100 dark:border-gray-800"><td class="py-1.5 px-2 text-xs text-gray-500 font-mono">${(t.task_id||'?').substring(0,12)}</td><td class="py-1.5 px-2 text-xs">${t.name || t.description || '?'}</td><td class="py-1.5 px-2 text-xs">${t.status}</td><td class="py-1.5 px-2 text-right text-xs">${Math.round((t.progress||0)*100)}%</td></tr>`).join('')}</tbody></table>`
+      : '<p class="text-sm text-gray-500">No tasks</p>';
+  } catch(e) { document.getElementById('tasksAdminList').innerHTML = `<p class="text-red-500 text-sm">${e.message}</p>`; }
+}
+
+// ─── COMPARE ───────────────────────────────────────────────────────
+async function compareIpos() {
+  const ids = [document.getElementById('compareId1').value, document.getElementById('compareId2').value, document.getElementById('compareId3').value].filter(Boolean);
+  if (ids.length < 2) { toast('Enter at least 2 IPO IDs', 'error'); return; }
+  try {
+    const ipos = await Promise.all(ids.map(id => apiGet(`/api/ipos/${id}`)));
+    const fields = ['company_name','status','price_band','platform','issue_type'];
+    const dates = ['open_date','close_date','drhp_filed_date','rhp_filed_date','fp_filed_date'];
+    const allFields = [...fields, 'open_date','close_date','drhp_filed_date','rhp_filed_date','fp_filed_date'];
+    let html = '<table class="w-full text-sm"><thead><tr class="text-xs text-gray-500 border-b border-gray-200 dark:border-gray-700"><th class="text-left py-2 px-2">Field</th>';
+    ipos.forEach(ipo => { html += `<th class="text-left py-2 px-2">${ipo.company_name} <span class="text-gray-400">#${ipo.id}</span></th>`; });
+    html += '</tr></thead><tbody>';
+    allFields.forEach(f => {
+      html += `<tr class="border-b border-gray-100 dark:border-gray-800"><td class="py-1.5 px-2 text-xs font-medium text-gray-500">${f}</td>`;
+      ipos.forEach(ipo => {
+        let val = ipo[f] || ipo.dates?.[f] || '-';
+        html += `<td class="py-1.5 px-2 text-xs">${val}</td>`;
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    document.getElementById('compareResults').innerHTML = html;
+  } catch(e) { document.getElementById('compareResults').innerHTML = `<p class="text-red-500 text-sm">${e.message}</p>`; }
+}
+
+// ─── KEYBOARD SHORTCUTS ───────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey) return;
+  if (e.key === 'r' && !e.ctrlKey && !e.metaKey) { refreshAll(); e.preventDefault(); }
+  if (e.key >= '1' && e.key <= '7') { switchTab(['overview','ipos','review','activity','admin','system','compare'][parseInt(e.key)-1]); }
+});
+
+// ─── INIT ──────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // Load status filter options
+  const order = ['FILED','DRHP','RHP','UPCOMING','OPEN','CLOSED','LISTED'];
+  const statusSel = document.getElementById('ipoStatusFilter');
+  order.forEach(s => { const o = document.createElement('option'); o.value=s; o.textContent=s; statusSel.appendChild(o); });
+  // Load year filter
+  const yearSel = document.getElementById('ipoYearFilter');
+  for (let y = 2026; y >= 2020; y--) { const o = document.createElement('option'); o.value=y; o.textContent=y; yearSel.appendChild(o); }
+  // Initial data load
+  fetchStats();
+  fetchIpos();
+  fetchSystemUsage();
+  fetchActivity();
+});
+
+console.log('IPO Dashboard loaded. Shortcuts: 1-7 tabs, R refresh');
+</script>
+</body>
+</html>
