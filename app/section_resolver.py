@@ -271,6 +271,13 @@ def _extract_page_structured(page, tabulate_module) -> tuple[str, list[dict]]:
     return page_text, structured_tables
 
 
+def _extract_page_pymupdf(pdf_path: str, page_num: int) -> str:
+    """Lightweight text extraction using pymupdf (fast, low RAM)."""
+    import pymupdf
+    with pymupdf.open(pdf_path) as doc:
+        return doc[page_num].get_text("text").strip()
+
+
 async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, client: httpx.AsyncClient) -> dict:
     from app.notifications import notify
     import pymupdf
@@ -296,10 +303,9 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
         db_service.delete_sections(ipo_id, doc_type)
         saved_sections = []
 
-        # Open pdfplumber ONCE for all section extractions
-        import pdfplumber
-        from tabulate import tabulate
-        plumber_doc = pdfplumber.open(tmp_path)
+        # Open pdfplumber ONCE for all section extractions (but use pymupdf for text
+        # during resolve to keep RAM low — pdfplumber can OOM on 500MB containers)
+        import pymupdf as _pm
 
         try:
             for sec in sections:
@@ -307,26 +313,14 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
                 ps, pe = sec["page_start"], sec["page_end"]
                 if ps and ps <= total_pages:
                     section_text = ""
-                    all_tables: list[dict] = []
                     for pn in range(ps - 1, min(pe, total_pages)):
                         try:
-                            page_content, page_tables = _extract_page_structured(plumber_doc.pages[pn], tabulate)
-                            if page_content:
-                                section_text += f"\n\n--- Page {pn + 1} ---\n\n{page_content}"
-                            else:
-                                import pymupdf
-                                with pymupdf.open(tmp_path) as doc:
-                                    ft = doc[pn].get_text('text')
-                                    section_text += f"\n\n--- Page {pn + 1} ---\n\n{ft}"
-                            for t in page_tables:
-                                t["page_num"] = pn + 1
-                            all_tables.extend(page_tables)
+                            ft = _extract_page_pymupdf(tmp_path, pn)
+                            if ft:
+                                section_text += f"\n\n--- Page {pn + 1} ---\n\n{ft}"
                         except Exception:
-                            import pymupdf
-                            with pymupdf.open(tmp_path) as doc:
-                                section_text += f"\n\n--- Page {pn + 1} ---\n\n{doc[pn].get_text('text')}"
+                            pass
                     db_service.upsert_section(ipo_id, doc_type, section_name, page_start=ps, page_end=pe, raw_md=section_text)
-                    db_service.save_tables(ipo_id, doc_type, section_name, all_tables)
 
                     r2_url = None
                     if _r2_module is not None and _r2_enabled() and section_text.strip():
@@ -339,7 +333,7 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
                 else:
                     db_service.upsert_section(ipo_id, doc_type, section_name)
         finally:
-            plumber_doc.close()
+            pass  # no pdfplumber to close — using pymupdf for lightweight resolve
 
         if len(saved_sections) == 0:
             notify(
