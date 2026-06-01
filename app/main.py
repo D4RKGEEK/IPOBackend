@@ -414,9 +414,32 @@ async def get_ipo_tables(
 
     cached = get_tables(ipo_id, doc_type=doc_type, section_name=effective_section)
     if cached and not page_num:
-        if effective_section:
-            return cached
-        return cached
+        # Restructure cached data same as fresh extraction
+        grouped: dict[str, Any] = {}
+        for t in cached:
+            sec = t.get("section_name", "unknown")
+            if sec not in grouped:
+                grouped[sec] = {
+                    "section_name": sec,
+                    "doc_type": t.get("doc_type", "rhp"),
+                    "page_range": {
+                        "start": min(r["page_num"] for r in cached if r.get("section_name") == sec),
+                        "end": max(r["page_num"] for r in cached if r.get("section_name") == sec),
+                    },
+                    "tables": [],
+                }
+            grouped[sec]["tables"].append({
+                "page": t.get("page_num"),
+                "table_index": t.get("table_index", 0),
+                "headers": t.get("data", {}).get("headers", []),
+                "rows": t.get("data", {}).get("rows", []),
+            })
+        return {
+            "ipo_id": ipo_id,
+            "sections": list(grouped.values()),
+            "total_tables": len(cached),
+            "source": "cache",
+        }
 
     # No tables cached — extract on-demand
     try:
@@ -499,10 +522,32 @@ async def get_ipo_tables(
         if results and doc_type and effective_section and not page_num:
             save_tables(ipo_id, doc_type, effective_section, results)
 
+        # Restructure into clean grouped response
+        grouped: dict[str, Any] = {}
+        for t in results:
+            sec = t.get("section_name", "unknown")
+            if sec not in grouped:
+                grouped[sec] = {
+                    "section_name": sec,
+                    "doc_type": t.get("doc_type", "rhp"),
+                    "page_range": {
+                        "start": min(r["page_num"] for r in results if r.get("section_name") == sec),
+                        "end": max(r["page_num"] for r in results if r.get("section_name") == sec),
+                    },
+                    "tables": [],
+                }
+            grouped[sec]["tables"].append({
+                "page": t.get("page_num"),
+                "table_index": t.get("table_index", 0),
+                "headers": t.get("headers", []),
+                "rows": t.get("rows", []),
+            })
+
         return {
-            "tables": results,
-            "extraction_time_s": round(elapsed, 1),
-            "pages_extracted": len(pages_to_extract) if (effective_section and not page_num) else (1 if page_num else len(plumber.pages)),
+            "ipo_id": ipo_id,
+            "sections": list(grouped.values()),
+            "total_tables": len(results),
+            "extraction_ms": round(elapsed * 1000),
         }
     except MemoryError:
         return {"error": "Out of memory — pass ?section_name=CAPITAL_STRUCTURE to extract a specific section"}
