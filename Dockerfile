@@ -57,7 +57,6 @@ COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 COPY scripts/ ./scripts/
-COPY README.md ./
 
 # Run as a non-root user — best practice; also prevents anyone who pops
 # a shell in the container from owning the whole filesystem.
