@@ -380,20 +380,25 @@ async def get_ipo_parsed_all(ipo_id: int = Path(...)):
 
 
 @app.get("/api/ipos/{ipo_id}/tables", tags=["Sections"],
-    summary="All tables extracted from PDF pages during resolve",
-    description="Returns structured table data (headers + rows) for every page where "
-                "pdfplumber detected a table. Filter by doc_type and/or section_name.")
+    summary="Structured tables from PDF pages",
+    description="Returns tables detected by pdfplumber. Filter by page_num (recommended!) "
+                "to extract a single page — avoids OOM on low-RAM containers. "
+                "Omitting page_num extracts ALL pages (may crash on 500MB RAM for 400+ pg PDFs).")
 async def get_ipo_tables(
     ipo_id: int = Path(...),
     doc_type: Optional[str] = Query(None, description="Filter: drhp / rhp / fp"),
     section_name: Optional[str] = Query(None, description="Filter: e.g. CAPITAL_STRUCTURE"),
+    page_num: Optional[int] = Query(None, description="Extract tables from this page only (1-indexed). Safe on any RAM."),
 ):
     from app.db.operations import get_tables, save_tables
     cached = get_tables(ipo_id, doc_type=doc_type, section_name=section_name)
-    if cached:
+    if cached and not page_num:
+        # Tables already cached — optionally filter by page
+        if page_num:
+            return [t for t in cached if t.get("page_num") == page_num]
         return cached
 
-    # No tables cached — try extracting on-demand from the R2-stored PDF
+    # No tables cached — extract on-demand (single page if page_num given, otherwise ALL)
     try:
         from app.db.operations import DatabaseService
         db = DatabaseService()
@@ -402,15 +407,16 @@ async def get_ipo_tables(
             return {"error": "IPO not found"}
         rhp_url = getattr(ipo, 'rhp_url', None)
         if not rhp_url:
-            return {"error": "no RHP URL available — tables not cached and no PDF to re-extract from"}
+            return {"error": "no RHP URL available"}
 
         import httpx, pdfplumber, tempfile, os
         from tabulate import tabulate
         from app.section_resolver import _extract_page_structured
 
+        # Download only — then open with pdfplumber
         resp = httpx.get(rhp_url, timeout=120, follow_redirects=True)
         if resp.status_code != 200:
-            return {"error": f"failed to download PDF: HTTP {resp.status_code}"}
+            return {"error": f"HTTP {resp.status_code}"}
 
         tmp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
         tmp_path = tmp.name
@@ -420,24 +426,47 @@ async def get_ipo_tables(
 
         plumber = pdfplumber.open(tmp_path)
         results = []
-        for pn in range(len(plumber.pages)):
-            page = plumber.pages[pn]
+
+        if page_num:
+            # Single page — safe on any RAM
+            idx = page_num - 1
+            if idx < 0 or idx >= len(plumber.pages):
+                plumber.close()
+                os.unlink(tmp_path)
+                return {"error": f"page_num {page_num} out of range (1-{len(plumber.pages)})"}
+            page = plumber.pages[idx]
             _, tables = _extract_page_structured(page, tabulate)
             for t in tables:
-                t["page_num"] = pn + 1
+                t["page_num"] = page_num
                 t["doc_type"] = doc_type or "rhp"
                 t["section_name"] = section_name or "all"
                 results.append(t)
+        else:
+            # ALL pages — may OOM on large PDFs. Warn + try anyway.
+            for pn in range(len(plumber.pages)):
+                page = plumber.pages[pn]
+                try:
+                    _, tables = _extract_page_structured(page, tabulate)
+                    for t in tables:
+                        t["page_num"] = pn + 1
+                        t["doc_type"] = doc_type or "rhp"
+                        t["section_name"] = section_name or "all"
+                        results.append(t)
+                except MemoryError:
+                    results.append({"error": f"OOM on page {pn+1} — use ?page_num=N to extract one at a time"})
+                    break
+
         plumber.close()
         os.unlink(tmp_path)
 
-        # Save for next time
-        if results and doc_type and section_name:
+        if results and doc_type and section_name and not page_num:
             save_tables(ipo_id, doc_type, section_name, results)
 
         return results
+    except MemoryError:
+        return {"error": "Out of memory — use ?page_num=N to extract one page at a time"}
     except Exception as e:
-        return {"error": f"on-demand table extraction failed: {str(e)}. Consider upgrading Railway RAM for pdfplumber."}
+        return {"error": f"table extraction failed: {str(e)}"}
 
 
 # ─── Resolve (background) ──────────────────────────────────
