@@ -792,7 +792,17 @@ async def clear_database(
 
 @app.get("/api/dashboard/logs", response_model=list[ScraperLogItem], tags=["Dashboard"])
 async def dashboard_logs(limit: int = Query(50, ge=1, le=200)):
-    return db_service.get_recent_logs(limit=limit)
+    rows = db_service.get_recent_logs(limit=limit)
+    return [
+        ScraperLogItem(
+            id=r.id, scraper_type=r.scraper_type, action=r.action,
+            status=r.status, company_name=r.company_name, message=r.message,
+            error_details=r.error_details, execution_time_ms=r.execution_time_ms,
+            new_ipos_found=r.new_ipos_found, status_changes=r.status_changes,
+            created_at=r.created_at.isoformat() if r.created_at else "",
+        )
+        for r in rows
+    ]
 
 
 # ─── System Usage ──────────────────────────────────────────────────
