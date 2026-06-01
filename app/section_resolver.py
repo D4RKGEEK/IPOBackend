@@ -257,18 +257,81 @@ def _extract_page_structured(page, tabulate_module) -> tuple[str, list[dict]]:
                     clean.append(cleaned)
             if clean:
                 tables_md_parts.append(tabulate_module(clean, tablefmt="github"))
-                structured_tables.append({
-                    "page_num": page.page_number if hasattr(page, 'page_number') else 0,
-                    "table_index": ti,
-                    "headers": clean[0] if clean else [],
-                    "rows": clean[1:] if len(clean) > 1 else [],
-                })
+                # Clean up empty columns before returning
+                cleaned_tbl = _clean_table_data(clean)
+                if cleaned_tbl:
+                    structured_tables.append({
+                        "page_num": page.page_number if hasattr(page, 'page_number') else 0,
+                        "table_index": ti,
+                        "headers": cleaned_tbl["headers"],
+                        "rows": cleaned_tbl["rows"],
+                    })
         if tables_md_parts:
             return page_text + "\n\n" + "\n\n".join(tables_md_parts), structured_tables
     except Exception:
         pass
 
     return page_text, structured_tables
+
+
+def _clean_table_data(rows: list[list[str]]) -> Optional[dict]:
+    """Remove empty columns and merge multi-row headers from an extracted table.
+
+    pdfplumber often detects table boundaries with extra empty cells.
+    This strips columns that are empty across ALL rows, and merges
+    consecutive header rows into a single header line.
+
+    Returns {"headers": [str], "rows": [list[str]]} or None.
+    """
+    if not rows:
+        return None
+
+    # Find columns that have any non-empty content across all rows
+    num_cols = max(len(r) for r in rows)
+    col_has_data = [False] * num_cols
+    for row in rows:
+        for ci in range(min(len(row), num_cols)):
+            if row[ci].strip():
+                col_has_data[ci] = True
+
+    # Keep only columns with data
+    keep_idx = [ci for ci, has in enumerate(col_has_data) if has]
+    if not keep_idx:
+        return None
+
+    def _keep(row):
+        return [row[ci] for ci in keep_idx if ci < len(row)]
+
+    cleaned = [_keep(r) for r in rows]
+
+    # Merge multi-row headers: combine consecutive rows until we hit a row
+    # that looks like data (has >1 non-empty column with numbers or coherent text)
+    header_rows = 1
+    for i in range(1, min(3, len(cleaned))):
+        # If next row has very different structure, stop
+        if i < len(cleaned):
+            non_empty = sum(1 for c in cleaned[i] if c.strip())
+            if non_empty > len(cleaned[i]) // 2:  # mostly filled → it's data
+                break
+            header_rows = i + 1
+
+    # Join header rows: concatenate top N rows cell-by-cell
+    merged_header: list[str] = []
+    for ci in range(len(cleaned[0])):
+        parts = []
+        for ri in range(min(header_rows, len(cleaned))):
+            val = cleaned[ri][ci].strip() if ci < len(cleaned[ri]) else ""
+            if val and val not in parts:
+                parts.append(val)
+        merged_header.append(" / ".join(parts) if parts else "")
+
+    data_rows = cleaned[header_rows:] if header_rows < len(cleaned) else []
+
+    # Remove header-only tables (no data rows)
+    if not data_rows:
+        return None
+
+    return {"headers": merged_header, "rows": data_rows}
 
 
 def _extract_page_pymupdf(pdf_path: str, page_num: int) -> str:
