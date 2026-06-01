@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 DocumentType = Literal["DRHP", "RHP"]
-Source = Literal["sebi", "bse", "nse"]
+Source = Literal["sebi", "bse", "nse", "upstox"]
 
 
 # ─── Source-specific Internal Models ────────────────────────
@@ -88,6 +88,7 @@ class IPORecord(BaseModel):
     bse_data: Optional[BSEData] = None
     nse_data: Optional[NSEData] = None
     bse_sme_doc: Optional['BSESMEDocument'] = None
+    upstox_data: Optional['UpstoxData'] = None
 
 
 class BSESMEDocument(BaseModel):
@@ -99,6 +100,42 @@ class BSESMEDocument(BaseModel):
     is_zip: bool = False
 
 
+class UpstoxData(BaseModel):
+    """All fields from Upstox IPO Detail API response.
+    
+    Maps directly from GET /v2/ipos/{id} → data object fields.
+    """
+    # From list + detail
+    id: str = ""
+    symbol: Optional[str] = None
+    name: str = ""
+    status: str = "unknown"  # upcoming, open, closed, listed
+    isin: Optional[str] = None
+    issue_type: Optional[str] = None  # regular, sme
+    issue_size: Optional[float] = None
+    industry: Optional[str] = None
+    minimum_price: Optional[float] = None
+    maximum_price: Optional[float] = None
+    bidding_start_date: Optional[str] = None
+    bidding_end_date: Optional[str] = None
+    total_subscription: Optional[str] = None
+    
+    # Detail-only fields
+    daily_start_time: Optional[str] = None
+    daily_end_time: Optional[str] = None
+    face_value: Optional[float] = None
+    tick_size: Optional[float] = None
+    lot_size: Optional[int] = None
+    minimum_quantity: Optional[int] = None
+    cut_off_price: Optional[float] = None
+    listing_price: Optional[float] = None
+    listing_exchange: Optional[str] = None
+    drhp_url: Optional[str] = None
+    rhp_url: Optional[str] = None
+    timeline: Optional[dict] = None
+    registrar_info: Optional[dict] = None
+
+
 # ─── Clean Public Response Models ───────────────────────────
 
 
@@ -108,6 +145,7 @@ class IPOSummarySource(BaseModel):
     bse: Optional[BSEData] = None
     nse: Optional[NSEData] = None
     bse_sme: Optional[BSESMEDocument] = None
+    upstox: Optional[UpstoxData] = None
 
 
 class IPOSummary(BaseModel):
@@ -121,6 +159,8 @@ class IPOSummary(BaseModel):
     price_band: Optional[str] = None
     platform: Optional[str] = None
     issue_type: Optional[str] = None
+    # Raw Upstox data (always included)
+    upstox_data: Optional[UpstoxData] = None
     # Only present when raw=true
     raw: Optional[IPOSummarySource] = None
 

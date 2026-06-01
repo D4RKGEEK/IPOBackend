@@ -53,7 +53,10 @@ def _require_internal_key(
         raise HTTPException(status_code=401, detail="invalid or missing internal API key")
 
 from .config import settings
-from .db_service import DatabaseService
+from .db.operations import (
+    DatabaseService, get_recent_status_changes, list_scraper_logs,
+    upsert_ipo, get_ipo, list_ipos, log_scrape,
+)
 from .logging_setup import configure_logging
 from .schemas import (
     IPOResponse,
@@ -63,7 +66,7 @@ from .schemas import (
     ScraperLogItem,
     StatusChangeItem,
 )
-from .scraper_service import ScraperService
+from .services.scraper import run_scrape
 from .section_parser import parse_all_sections
 from .section_resolver import resolve_document
 from .task_manager import get_manager, run_in_background
@@ -110,7 +113,6 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 # ─── Services ─────────────────────────────────────────────────
 db_service = DatabaseService()
-scraper_service = ScraperService(db=db_service)
 
 
 # ─── Health ───────────────────────────────────────────────────
@@ -247,10 +249,14 @@ async def get_ipo_by_id(ipo_id: int = Path(...)):
     if not ipo: raise HTTPException(status_code=404, detail="IPO not found")
     d = ipo.to_dict()
     history = db_service.get_status_history(ipo_id, limit=50)
+    from .schemas import UpstoxData
+    upstox_raw = d.get("upstox_data")
+    upstox_obj = UpstoxData(**upstox_raw) if isinstance(upstox_raw, dict) else None
     return {"id": ipo.id, "company_name": d["company_name"], "status": d.get("status"), "dates": {
         "drhp_filed": d.get("drhp_filed_date"), "rhp_filed": d.get("rhp_filed_date"),
         "fp_filed": d.get("fp_filed_date"), "open": d.get("open_date"), "close": d.get("close_date"),
     }, "documents": d.get("documents", {}), "platform": d.get("platform"),
+       "upstox_data": upstox_obj.model_dump(exclude_none=True) if upstox_obj else None,
        "status_history": history}
 
 
@@ -335,7 +341,8 @@ async def get_review_queue(
     limit: int = Query(50, ge=1, le=200),
     publish_status: str = Query("needs_review", description="needs_review | rejected | pending"),
 ):
-    from .db_models import IPOMaster, get_session
+    from .db.models import IPOMaster
+    from .db.engine import get_session
     with get_session() as s:
         rows = (
             s.query(IPOMaster)
@@ -370,6 +377,19 @@ async def get_review_queue(
                 "the full 60-field blob into every section. Use /unified for new clients.")
 async def get_ipo_parsed_all(ipo_id: int = Path(...)):
     return await get_ipo_unified(ipo_id)
+
+
+@app.get("/api/ipos/{ipo_id}/tables", tags=["Sections"],
+    summary="All tables extracted from PDF pages during resolve",
+    description="Returns structured table data (headers + rows) for every page where "
+                "pdfplumber detected a table. Filter by doc_type and/or section_name.")
+async def get_ipo_tables(
+    ipo_id: int = Path(...),
+    doc_type: Optional[str] = Query(None, description="Filter: drhp / rhp / fp"),
+    section_name: Optional[str] = Query(None, description="Filter: e.g. CAPITAL_STRUCTURE"),
+):
+    from app.db.operations import get_tables
+    return get_tables(ipo_id, doc_type=doc_type, section_name=section_name)
 
 
 # ─── Resolve (background) ──────────────────────────────────
@@ -463,10 +483,11 @@ async def parse_ipo_sections_firecrawl(ipo_id: int = Path(...), force: bool = Qu
 @app.post("/api/refresh", tags=["Aggregation"],
     summary="Trigger a full re-scrape in the background")
 async def refresh(
+    sources: str = Query("upstox", description="Sources: 'upstox' (default) or 'all' (Upstox + legacy SEBI/BSE/NSE)"),
     year: Optional[int] = Query(None, description="Limit to a specific filing year (e.g. 2026)."),
     _auth: None = Depends(_require_internal_key),
 ):
-    task_id = get_manager().create("scrape", f"Scrape IPOs (year={year or 'all'})")
+    task_id = get_manager().create("scrape", f"Scrape IPOs (sources={sources}, year={year or 'all'})")
 
     def _run(tid, mgr):
         import asyncio
@@ -475,9 +496,8 @@ async def refresh(
                 mgr.update(tid, pct, label)
 
             mgr.update(tid, 0.05, "Starting scrape...")
-            asyncio.run(scraper_service.run_full_scrape(
-                bse_sme=True, include_pdf_urls=True, year=year,
-                progress_callback=on_progress,
+            asyncio.run(run_scrape(
+                year=year or 2026, sources=sources, progress_callback=on_progress,
             ))
             mgr.update(tid, 1.0, "Complete")
             return {"status": "ok", "message": "Scrape completed"}
@@ -506,14 +526,32 @@ async def dashboard_logs(limit: int = Query(50, ge=1, le=200)):
 
 
 # ─── Helpers ──────────────────────────────────────────────────
-def _format_ipo(ipo: dict[str, Any]) -> IPOSummary:
-    docs = ipo.get("documents", {})
+def _format_ipo(ipo) -> IPOSummary:
+    """Format IPO for API response. Accepts IPOMaster ORM object or dict."""
+    if hasattr(ipo, 'to_dict'):
+        d = ipo.to_dict()
+        docs = d.get("documents", {})
+        upstox_raw = d.get("upstox_data")
+        return IPOSummary(
+            id=d.get("id", 0), company_name=d.get("company_name", ""),
+            status=d.get("status", "unknown"),
+            dates={"drhp_filed": d.get("drhp_filed_date"), "rhp_filed": d.get("rhp_filed_date"),
+                   "fp_filed": d.get("fp_filed_date"), "open": d.get("open_date"), "close": d.get("close_date")},
+            documents={"drhp": docs.get("drhp"), "rhp": docs.get("rhp"), "final_prospectus": docs.get("final_prospectus")},
+            price_band=d.get("price_band"), platform=d.get("platform"),
+            issue_type=d.get("issue_type"), upstox_data=upstox_raw,
+        )
+    # Legacy dict fallback
+    docs = ipo.get("documents", {}) if isinstance(ipo, dict) else {}
     if isinstance(docs, dict):
         clean_docs = {"drhp": docs.get("drhp"), "rhp": docs.get("rhp"), "final_prospectus": docs.get("final_prospectus")}
     else:
         clean_docs = {"drhp": ipo.get("drhp_url"), "rhp": ipo.get("rhp_url"), "final_prospectus": ipo.get("final_prospectus_url")}
+    from .schemas import UpstoxData
+    upstox_raw = ipo.get("upstox_data") if isinstance(ipo, dict) else None
+    upstox_obj = UpstoxData(**upstox_raw) if isinstance(upstox_raw, dict) else None
     return IPOSummary(id=ipo.get("id", 0), company_name=ipo["company_name"], status=ipo.get("status", "unknown"),
-        dates={"drhp_filed":ipo.get("drhp_filed_date"),"rhp_filed":ipo.get("rhp_filed_date"),
-               "fp_filed":ipo.get("fp_filed_date"),"open":ipo.get("open_date"),"close":ipo.get("close_date")},
+        dates={"drhp_filed": ipo.get("drhp_filed_date"), "rhp_filed": ipo.get("rhp_filed_date"),
+               "fp_filed": ipo.get("fp_filed_date"), "open": ipo.get("open_date"), "close": ipo.get("close_date")},
         documents=clean_docs, price_band=ipo.get("price_band"), platform=ipo.get("platform"),
-        issue_type=ipo.get("issue_type"))
+        issue_type=ipo.get("issue_type"), upstox_data=upstox_obj)

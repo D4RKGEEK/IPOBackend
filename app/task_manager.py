@@ -14,7 +14,8 @@ import time
 import uuid
 from typing import Any, Optional
 
-from app.db_models import BackgroundTask, get_session
+from app.db.models import BackgroundTask
+from app.db.engine import get_session
 
 logger = logging.getLogger(__name__)
 

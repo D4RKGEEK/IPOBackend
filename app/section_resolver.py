@@ -23,26 +23,43 @@ except Exception as _e:
 
 
 def _r2_enabled() -> bool:
-    """R2 upload only runs when the bucket env var is set."""
-    return bool(os.environ.get("R2_BUCKET"))
+    """R2 upload only runs when R2 is configured."""
+    from app.config import settings
+    return settings.r2_enabled
 
 KNOWN_SECTIONS = [
     "GENERAL INFORMATION", "CAPITAL STRUCTURE",
+    "CAPITAL STRUCTURE OF THE COMPANY",
     "OBJECTS OF THE OFFER", "OBJECTS OF THE ISSUE",
+    "OBJECT OF THE ISSUE",
     "BASIS FOR OFFER PRICE", "BASIS FOR ISSUE PRICE",
+    "BASIS FOR THE ISSUE PRICE",
     "RISK FACTORS", "OUR MANAGEMENT",
     "OUR PROMOTERS AND PROMOTER GROUP", "OUR PROMOTERS & PROMOTER GROUP",
     "OUR PROMOTER & PROMOTER GROUP",
     "DIVIDEND POLICY", "INDUSTRY OVERVIEW", "OUR BUSINESS", "BUSINESS OVERVIEW",
     "STATEMENT OF SPECIAL TAX BENEFITS", "STATEMENT OF POSSIBLE SPECIAL TAX BENEFITS",
+    "STATEMENT OF TAX BENEFITS",
     "RESTATED FINANCIAL STATEMENTS", "RESTATED FINANCIAL STATEMENT",
     "RESTATED FINANCIAL INFORMATION", "RESTATED CONSOLIDATED FINANCIAL STATEMENTS",
+    "RESTATED CONSOLIDATED FINANCIAL INFORMATION",
+    "FINANCIAL INFORMATION", "FINANCIAL INFORMATION OF THE COMPANY",
     "OTHER FINANCIAL INFORMATION", "STATEMENT OF FINANCIAL INDEBTEDNESS",
+    "FINANCIAL INDEBTEDNESS",
     "CAPITALISATION STATEMENT", "OUTSTANDING LITIGATION",
+    "OUTSTANDING LITIGATION AND MATERIAL DEVELOPMENTS",
+    "OUTSTANDING LITIGATIONS AND MATERIAL DEVELOPMENTS",
+    "OUTSTANDING LITIGATION AND OTHER MATERIAL DEVELOPMENTS",
     "ISSUE PROCEDURE", "ISSUE STRUCTURE", "TERMS OF THE ISSUE", "TERMS OF THE OFFER",
     "OUR GROUP COMPANIES", "OUR GROUP COMPANY",
-    "KEY REGULATIONS AND POLICIES", "HISTORY AND CERTAIN CORPORATE MATTERS",
-    "ABOUT THE COMPANY",
+    "KEY REGULATIONS AND POLICIES", "KEY INDUSTRY REGULATIONS AND POLICIES",
+    "KEY INDUSTRY REGULATIONS",
+    "GOVERNMENT AND OTHER APPROVALS", "GOVERNMENT AND OTHER STATUTORY APPROVALS",
+    "HISTORY AND CERTAIN CORPORATE MATTERS",
+    "HISTORY AND CORPORATE STRUCTURE",
+    "OUR HISTORY AND CORPORATE STRUCTURE",
+    "OUR HISTORY AND CERTAIN CORPORATE MATTERS",
+    "ABOUT THE COMPANY", "ABOUT OUR COMPANY", "ABOUT COMPANY",
 ]
 
 MAX_DOWNLOAD_SIZE = 50 * 1024 * 1024
@@ -54,11 +71,31 @@ def _section_key(name: str) -> str:
         "RESTATED_FINANCIAL_STATEMENT": "RESTATED_FINANCIAL_STATEMENTS",
         "RESTATED_FINANCIAL_INFORMATION": "RESTATED_FINANCIAL_STATEMENTS",
         "RESTATED_CONSOLIDATED_FINANCIAL_STATEMENTS": "RESTATED_FINANCIAL_STATEMENTS",
+        "RESTATED_CONSOLIDATED_FINANCIAL_INFORMATION": "RESTATED_FINANCIAL_STATEMENTS",
+        "FINANCIAL_INFORMATION": "RESTATED_FINANCIAL_STATEMENTS",
+        "FINANCIAL_INFORMATION_OF_THE_COMPANY": "RESTATED_FINANCIAL_STATEMENTS",
+        "FINANCIAL_INDEBTEDNESS": "STATEMENT_OF_FINANCIAL_INDEBTEDNESS",
         "STATEMENT_OF_POSSIBLE_SPECIAL_TAX_BENEFITS": "STATEMENT_OF_SPECIAL_TAX_BENEFITS",
+        "STATEMENT_OF_TAX_BENEFITS": "STATEMENT_OF_SPECIAL_TAX_BENEFITS",
         "OUR_PROMOTER_AND_PROMOTER_GROUP": "OUR_PROMOTERS_AND_PROMOTER_GROUP",
         "OUR_PROMOTERS_&_PROMOTER_GROUP": "OUR_PROMOTERS_AND_PROMOTER_GROUP",
         "OUR_PROMOTER_&_PROMOTER_GROUP": "OUR_PROMOTERS_AND_PROMOTER_GROUP",
         "CAPITALISATION_STATEMENT": "CAPITAL_STRUCTURE",
+        "CAPITAL_STRUCTURE_OF_THE_COMPANY": "CAPITAL_STRUCTURE",
+        "OUTSTANDING_LITIGATION_AND_MATERIAL_DEVELOPMENTS": "OUTSTANDING_LITIGATION",
+        "OUTSTANDING_LITIGATIONS_AND_MATERIAL_DEVELOPMENTS": "OUTSTANDING_LITIGATION",
+        "OUTSTANDING_LITIGATION_AND_OTHER_MATERIAL_DEVELOPMENTS": "OUTSTANDING_LITIGATION",
+        "KEY_INDUSTRY_REGULATIONS": "KEY_REGULATIONS_AND_POLICIES",
+        "KEY_INDUSTRY_REGULATIONS_AND_POLICIES": "KEY_REGULATIONS_AND_POLICIES",
+        "GOVERNMENT_AND_OTHER_APPROVALS": "KEY_REGULATIONS_AND_POLICIES",
+        "GOVERNMENT_AND_OTHER_STATUTORY_APPROVALS": "KEY_REGULATIONS_AND_POLICIES",
+        "HISTORY_AND_CORPORATE_STRUCTURE": "HISTORY_AND_CERTAIN_CORPORATE_MATTERS",
+        "OUR_HISTORY_AND_CORPORATE_STRUCTURE": "HISTORY_AND_CERTAIN_CORPORATE_MATTERS",
+        "OUR_HISTORY_AND_CERTAIN_CORPORATE_MATTERS": "HISTORY_AND_CERTAIN_CORPORATE_MATTERS",
+        "ABOUT_OUR_COMPANY": "ABOUT_THE_COMPANY",
+        "ABOUT_COMPANY": "ABOUT_THE_COMPANY",
+        "OBJECT_OF_THE_ISSUE": "OBJECTS_OF_THE_ISSUE",
+        "BASIS_FOR_THE_ISSUE_PRICE": "BASIS_FOR_ISSUE_PRICE",
     }
     return ALIASES.get(key, key)
 
@@ -170,6 +207,70 @@ def _page_range_entries(sections: list[dict], total_pages: int) -> list[dict]:
     return result
 
 
+def _extract_page_with_tables(pdf_path: str, page_num: int, pymupdf_fallback: bool = True) -> str:
+    """Extract a PDF page as markdown text + structured markdown tables.
+
+    Standalone version (opens pdfplumber per call). Use _extract_plumber_page
+    instead when you already have a pdfplumber instance open.
+    """
+    try:
+        import pdfplumber
+        from tabulate import tabulate
+
+        with pdfplumber.open(pdf_path) as plumber:
+            return _render_plumber_page(plumber.pages[page_num], tabulate)
+    except Exception:
+        if pymupdf_fallback:
+            import pymupdf
+            with pymupdf.open(pdf_path) as doc:
+                return doc[page_num].get_text("text").strip()
+        return ""
+
+
+def _render_plumber_page(page, tabulate_module) -> str:
+    """Extract text + tables from an already-open pdfplumber page. Returns markdown."""
+    page_text, _ = _extract_page_structured(page, tabulate_module)
+    return page_text
+
+
+def _extract_page_structured(page, tabulate_module) -> tuple[str, list[dict]]:
+    """Extract text + structured tables from a pdfplumber page.
+
+    Returns (markdown_text, list_of_table_dicts).
+    Each table dict: {"page_num": int, "table_index": int,
+                      "headers": [str], "rows": [[str]]}
+    """
+    page_text = (page.extract_text() or "").strip()
+    structured_tables: list[dict] = []
+
+    try:
+        found = page.find_tables()
+        tables_md_parts = []
+        for ti, t in enumerate(found):
+            tbl = t.extract()
+            clean = []
+            for row in tbl:
+                cleaned: list[str] = []
+                for c in row:
+                    cleaned.append((c or "").strip().replace("\n", " "))
+                if any(c for c in cleaned):
+                    clean.append(cleaned)
+            if clean:
+                tables_md_parts.append(tabulate_module(clean, tablefmt="github"))
+                structured_tables.append({
+                    "page_num": page.page_number if hasattr(page, 'page_number') else 0,
+                    "table_index": ti,
+                    "headers": clean[0] if clean else [],
+                    "rows": clean[1:] if len(clean) > 1 else [],
+                })
+        if tables_md_parts:
+            return page_text + "\n\n" + "\n\n".join(tables_md_parts), structured_tables
+    except Exception:
+        pass
+
+    return page_text, structured_tables
+
+
 async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, client: httpx.AsyncClient) -> dict:
     from app.notifications import notify
     import pymupdf
@@ -194,29 +295,52 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
         sections = _page_range_entries(page_entries, total_pages)
         db_service.delete_sections(ipo_id, doc_type)
         saved_sections = []
-        pdf_doc = pymupdf.open(tmp_path)
-        for sec in sections:
-            section_name = sec["section_name"]
-            ps, pe = sec["page_start"], sec["page_end"]
-            if ps and ps <= total_pages:
-                section_text = ""
-                for pn in range(ps - 1, min(pe, total_pages)):
-                    try:
-                        section_text += f"\n\n--- Page {pn + 1} ---\n\n{pdf_doc[pn].get_text('text')}"
-                    except: pass
-                db_service.upsert_section(ipo_id, doc_type, section_name, page_start=ps, page_end=pe, raw_md=section_text)
 
-                r2_url = None
-                if _r2_module is not None and _r2_enabled() and section_text.strip():
-                    try:
-                        r2_url = _r2_module.upload_section(ipo_id, doc_type, section_name, section_text)
-                    except Exception as e:
-                        logger.warning(f"R2 upload failed for {ipo_id}/{doc_type}/{section_name}: {e}")
+        # Open pdfplumber ONCE for all section extractions
+        import pdfplumber
+        from tabulate import tabulate
+        plumber_doc = pdfplumber.open(tmp_path)
 
-                saved_sections.append({"section_name": section_name, "page_start": ps, "page_end": pe, "r2_url": r2_url})
-            else:
-                db_service.upsert_section(ipo_id, doc_type, section_name)
-        pdf_doc.close()
+        try:
+            for sec in sections:
+                section_name = sec["section_name"]
+                ps, pe = sec["page_start"], sec["page_end"]
+                if ps and ps <= total_pages:
+                    section_text = ""
+                    all_tables: list[dict] = []
+                    for pn in range(ps - 1, min(pe, total_pages)):
+                        try:
+                            page_content, page_tables = _extract_page_structured(plumber_doc.pages[pn], tabulate)
+                            if page_content:
+                                section_text += f"\n\n--- Page {pn + 1} ---\n\n{page_content}"
+                            else:
+                                import pymupdf
+                                with pymupdf.open(tmp_path) as doc:
+                                    ft = doc[pn].get_text('text')
+                                    section_text += f"\n\n--- Page {pn + 1} ---\n\n{ft}"
+                            for t in page_tables:
+                                t["page_num"] = pn + 1
+                            all_tables.extend(page_tables)
+                        except Exception:
+                            import pymupdf
+                            with pymupdf.open(tmp_path) as doc:
+                                section_text += f"\n\n--- Page {pn + 1} ---\n\n{doc[pn].get_text('text')}"
+                    db_service.upsert_section(ipo_id, doc_type, section_name, page_start=ps, page_end=pe, raw_md=section_text)
+                    db_service.save_tables(ipo_id, doc_type, section_name, all_tables)
+
+                    r2_url = None
+                    if _r2_module is not None and _r2_enabled() and section_text.strip():
+                        try:
+                            r2_url = _r2_module.upload_section(ipo_id, doc_type, section_name, section_text)
+                        except Exception as e:
+                            logger.warning(f"R2 upload failed for {ipo_id}/{doc_type}/{section_name}: {e}")
+
+                    saved_sections.append({"section_name": section_name, "page_start": ps, "page_end": pe, "r2_url": r2_url})
+                else:
+                    db_service.upsert_section(ipo_id, doc_type, section_name)
+        finally:
+            plumber_doc.close()
+
         if len(saved_sections) == 0:
             notify(
                 f"⚠️ Resolve found 0 sections · ipo={ipo_id} · {doc_type.upper()}",

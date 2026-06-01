@@ -20,9 +20,13 @@ MAX_ZIP_EXTRACT_SIZE = 50 * 1024 * 1024
 
 def normalize_company_name(name: str) -> str:
     normalized = (name or "").upper().strip()
-    normalized = re.sub(r"\s*-\s*(DRHP|RHP|UDRHP|IPO|FPO)$", "", normalized)
-    normalized = re.sub(r"\s+PRIVATE\s+LIMITED$", " PVT LTD", normalized)
-    normalized = re.sub(r"\s+LIMITED$", " LTD", normalized)
+    normalized = re.sub(r"\s+-\s+(DRHP|RHP|UDRHP|IPO|FPO)$", "", normalized)
+    normalized = re.sub(r"\s+(IPO|FPO)$", "", normalized)
+    normalized = re.sub(r"\s+LTD$", "", normalized)
+    normalized = re.sub(r"\s+PRIVATE\s+LIMITED$", "", normalized)
+    normalized = re.sub(r"\s+LIMITED$", "", normalized)
+    normalized = normalized.replace("&", " AND ")
+    normalized = normalized.replace("'", "")
     normalized = re.sub(r"[^A-Z0-9 ]+", " ", normalized)
     normalized = re.sub(r"\s+", " ", normalized)
     return normalized.strip()

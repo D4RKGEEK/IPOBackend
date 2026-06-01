@@ -119,6 +119,11 @@ def notify(
     Always safe to call: if no channels are configured, this is a no-op
     (logged at DEBUG).
     """
+    # Temp mute: global kill switch (NOTIFICATIONS_DISABLED=true in .env)
+    if settings.notifications_disabled:
+        logger.debug("notifications globally disabled, skipping: %s", message)
+        return
+
     # Always log locally for the structured-log paper trail
     log_fn = {"info": logger.info, "warn": logger.warning,
               "error": logger.error, "digest": logger.info}.get(level, logger.info)
