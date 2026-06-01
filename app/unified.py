@@ -178,7 +178,9 @@ _AMOUNT_FIELDS = {
 
 
 def _lakhs_to_crores(value: Any) -> Any:
-    """Convert a lakh-denominated string to crores. Non-amount values pass through."""
+    """Convert a lakh-denominated string/dict to crores. Non-amount values pass through."""
+    if isinstance(value, dict):
+        return {k: _lakhs_to_crores(v) for k, v in value.items()}
     if not isinstance(value, str):
         return value
     m = re.match(r'^[₹Rs.]*\s*([\d,]+\.?\d*)\s*(lakhs?|Lakhs?)', value.strip())

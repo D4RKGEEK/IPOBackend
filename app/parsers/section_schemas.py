@@ -23,7 +23,7 @@ from typing import Any
 
 
 # Bump when you change SECTION_SCHEMAS shape.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 # Shared instruction prefix added to every per-section prompt
@@ -224,16 +224,16 @@ SECTION_SCHEMAS: dict[str, dict[str, Any]] = {
             "financial_years": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "List of fiscal years covered, e.g. ['FY2023', 'FY2024', 'FY2025'].",
+                "description": "List of fiscal periods covered, e.g. ['Dec 31, 2025', 'Mar 31, 2025', 'Mar 31, 2024', 'Mar 31, 2023'].",
             },
-            "total_revenue": {"type": "string", "description": "Total revenue / revenue from operations for the most recent fiscal year."},
-            "total_income": {"type": "string", "description": "Total income (revenue + other income) for the most recent year."},
-            "profit_after_tax": {"type": "string", "description": "Profit after tax for the most recent year."},
-            "ebitda": {"type": "string", "description": "EBITDA for the most recent year."},
-            "total_assets": {"type": "string", "description": "Total assets on the balance sheet for the most recent year."},
-            "net_worth": {"type": "string", "description": "Net worth / total equity for the most recent year."},
-            "reserves_and_surplus": {"type": "string", "description": "Reserves and surplus."},
-            "total_borrowings": {"type": "string", "description": "Total borrowings (short + long-term)."},
+            "total_revenue": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Total revenue / revenue from operations per period. Key = period label, value = amount. Example: {'31-Dec-2025': '6,447.28 lakhs', '31-Mar-2025': '2,853.18 lakhs'}."},
+            "total_income": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Total income (revenue + other income) per period. Key = period label, value = amount."},
+            "profit_after_tax": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Profit after tax per period. Key = period label, value = amount."},
+            "ebitda": {"type": "object", "additionalProperties": {"type": "string"}, "description": "EBITDA per period. Key = period label, value = amount."},
+            "total_assets": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Total assets per period. Key = period label, value = amount."},
+            "net_worth": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Net worth / total equity per period. Key = period label, value = amount."},
+            "reserves_and_surplus": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Reserves and surplus per period. Key = period label, value = amount."},
+            "total_borrowings": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Total borrowings (short + long-term) per period. Key = period label, value = amount."},
         },
     },
 

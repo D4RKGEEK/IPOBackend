@@ -388,8 +388,56 @@ async def get_ipo_tables(
     doc_type: Optional[str] = Query(None, description="Filter: drhp / rhp / fp"),
     section_name: Optional[str] = Query(None, description="Filter: e.g. CAPITAL_STRUCTURE"),
 ):
-    from app.db.operations import get_tables
-    return get_tables(ipo_id, doc_type=doc_type, section_name=section_name)
+    from app.db.operations import get_tables, save_tables
+    cached = get_tables(ipo_id, doc_type=doc_type, section_name=section_name)
+    if cached:
+        return cached
+
+    # No tables cached — try extracting on-demand from the R2-stored PDF
+    try:
+        from app.db.operations import DatabaseService
+        db = DatabaseService()
+        ipo = db.get_ipo_by_id(ipo_id)
+        if not ipo:
+            return {"error": "IPO not found"}
+        rhp_url = getattr(ipo, 'rhp_url', None)
+        if not rhp_url:
+            return {"error": "no RHP URL available — tables not cached and no PDF to re-extract from"}
+
+        import httpx, pdfplumber, tempfile, os
+        from tabulate import tabulate
+        from app.section_resolver import _extract_page_structured
+
+        resp = httpx.get(rhp_url, timeout=120, follow_redirects=True)
+        if resp.status_code != 200:
+            return {"error": f"failed to download PDF: HTTP {resp.status_code}"}
+
+        tmp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        with open(tmp_path, 'wb') as f:
+            f.write(resp.content)
+
+        plumber = pdfplumber.open(tmp_path)
+        results = []
+        for pn in range(len(plumber.pages)):
+            page = plumber.pages[pn]
+            _, tables = _extract_page_structured(page, tabulate)
+            for t in tables:
+                t["page_num"] = pn + 1
+                t["doc_type"] = doc_type or "rhp"
+                t["section_name"] = section_name or "all"
+                results.append(t)
+        plumber.close()
+        os.unlink(tmp_path)
+
+        # Save for next time
+        if results and doc_type and section_name:
+            save_tables(ipo_id, doc_type, section_name, results)
+
+        return results
+    except Exception as e:
+        return {"error": f"on-demand table extraction failed: {str(e)}. Consider upgrading Railway RAM for pdfplumber."}
 
 
 # ─── Resolve (background) ──────────────────────────────────
