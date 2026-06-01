@@ -699,7 +699,7 @@ function renderStatusChanges(changes) {
 
 function renderScraperLogs(logs) {
   const el = document.getElementById('scraperLogsFeed');
-  if (!logs.length) { el.innerHTML = '<p class="text-sm text-gray-500">No recent logs</p>'; return; }
+  if (!logs || !logs.length || logs.error) { el.innerHTML = '<p class="text-sm text-gray-500">No recent logs</p>'; return; }
   el.innerHTML = logs.slice(0, 20).map(l => `
     <div class="flex items-start gap-2 py-1.5 border-b border-gray-100 dark:border-gray-800 last:border-0">
       <span class="text-[10px] text-gray-400 shrink-0 w-14">${l.created_at ? new Date(l.created_at).toLocaleTimeString() : ''}</span>

@@ -795,6 +795,127 @@ async def dashboard_logs(limit: int = Query(50, ge=1, le=200)):
     return db_service.get_recent_logs(limit=limit)
 
 
+# ─── System Usage ──────────────────────────────────────────────────
+
+import subprocess as _subprocess
+import time as _time
+from pathlib import Path as _FilePath
+
+
+@app.get("/api/system/usage", tags=["System"],
+    summary="All operational metrics: RAM, CPU, disk, DB, R2, Firecrawl credits, config")
+async def system_usage():
+    """Gather system-level operational metrics for the dashboard."""
+    result: dict[str, Any] = {}
+
+    # RAM
+    try:
+        mem = _FilePath("/proc/meminfo").read_text()
+        total = avail = 0
+        for line in mem.splitlines():
+            if line.startswith("MemTotal:"): total = int(line.split()[1]) // 1024
+            elif line.startswith("MemAvailable:"): avail = int(line.split()[1]) // 1024
+        result["ram"] = {"total_mb": total, "available_mb": avail,
+                         "used_mb": total - avail,
+                         "used_pct": round((total - avail) / total * 100, 1) if total else 0}
+    except Exception:
+        result["ram"] = {"total_mb": 0, "available_mb": 0, "used_mb": 0, "used_pct": 0}
+
+    # CPU load
+    try:
+        load = _FilePath("/proc/loadavg").read_text().split()
+        result["cpu"] = {"load_1m": float(load[0]), "load_5m": float(load[1]), "load_15m": float(load[2])}
+    except Exception:
+        result["cpu"] = {"load_1m": 0, "load_5m": 0, "load_15m": 0}
+
+    # Uptime
+    try:
+        uptime = _FilePath("/proc/uptime").read_text().split()
+        result["uptime_seconds"] = float(uptime[0])
+    except Exception:
+        result["uptime_seconds"] = 0
+
+    # Disk
+    try:
+        df = _subprocess.run(["df", "-h", "/"], capture_output=True, text=True, timeout=5)
+        parts = df.stdout.splitlines()[1].split()
+        result["disk"] = {"size": parts[1], "used": parts[2], "avail": parts[3], "used_pct": parts[4].rstrip("%")}
+    except Exception:
+        result["disk"] = {"size": "?", "used": "?", "avail": "?", "used_pct": "?"}
+
+    # Database
+    try:
+        from .db.engine import get_session as _db_session
+        from sqlalchemy import text as _sql
+        with _db_session() as s:
+            size = s.execute(_sql("SELECT pg_database_size(current_database())")).scalar()
+            result["database"] = {"size_bytes": size, "size_mb": round(size / 1024 / 1024, 1) if size else 0}
+            result["database"]["tables"] = {}
+            for tbl in ("ipo_master", "document_sections", "document_tables",
+                        "scraper_logs", "ipo_status_history", "documents"):
+                try:
+                    result["database"]["tables"][tbl] = s.execute(_sql(f"SELECT COUNT(*) FROM {tbl}")).scalar()
+                except Exception:
+                    pass
+    except Exception as e:
+        result["database"] = {"error": str(e)[:200]}
+
+    # R2
+    if settings.r2_enabled:
+        try:
+            import boto3
+            from botocore.client import Config
+            r2 = boto3.client("s3", endpoint_url=settings.r2_endpoint,
+                              aws_access_key_id=settings.r2_access_key_id,
+                              aws_secret_access_key=settings.r2_secret_access_key,
+                              config=Config(signature_version="s3v4"), region_name="auto")
+            total_size = total_objs = 0
+            truncated, marker = True, ""
+            while truncated:
+                args: dict = {"Bucket": settings.r2_bucket, "MaxKeys": 1000}
+                if marker: args["Marker"] = marker
+                resp = r2.list_objects_v2(**args)
+                contents = resp.get("Contents", [])
+                total_objs += len(contents)
+                total_size += sum(o.get("Size", 0) for o in contents)
+                truncated = resp.get("IsTruncated", False)
+                if truncated and contents: marker = contents[-1]["Key"]
+                else: break
+            result["r2"] = {"bucket": settings.r2_bucket, "object_count": total_objs,
+                            "size_bytes": total_size, "size_mb": round(total_size / 1024 / 1024, 1)}
+        except Exception as e:
+            result["r2"] = {"error": str(e)[:200]}
+    else:
+        result["r2"] = {"error": "not configured"}
+
+    # Firecrawl credits
+    if settings.firecrawl_api_key:
+        try:
+            import httpx as _httpx2
+            resp = _httpx2.get("https://api.firecrawl.dev/v1/team",
+                               headers={"Authorization": f"Bearer {settings.firecrawl_api_key}"}, timeout=10)
+            if resp.status_code == 200:
+                d = resp.json()
+                result["firecrawl"] = {"credits_used": d.get("creditsUsed", 0),
+                                        "credits_remaining": d.get("creditsRemaining", 0),
+                                        "plan": d.get("plan", "unknown")}
+            else:
+                result["firecrawl"] = {"error": f"HTTP {resp.status_code}"}
+        except Exception as e:
+            result["firecrawl"] = {"error": str(e)[:200]}
+    else:
+        result["firecrawl"] = {"error": "not configured"}
+
+    # Config
+    result["config"] = {"parser_provider": settings.parser_provider,
+                         "r2_configured": settings.r2_enabled,
+                         "deepseek_configured": bool(settings.deepseek_api_key),
+                         "firecrawl_configured": bool(settings.firecrawl_api_key),
+                         "db_dialect": settings.db_dialect, "api_version": settings.version}
+
+    return result
+
+
 # ─── Helpers ──────────────────────────────────────────────────
 def _format_ipo(ipo) -> IPOSummary:
     """Format IPO for API response. Accepts IPOMaster ORM object or dict."""
