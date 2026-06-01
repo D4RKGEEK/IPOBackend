@@ -54,6 +54,7 @@ WORKDIR /app
 
 # Copy only what runs in production. Anything in .dockerignore is excluded.
 COPY app/ ./app/
+COPY dashboard/ ./dashboard/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 COPY scripts/ ./scripts/
