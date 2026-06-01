@@ -56,23 +56,52 @@ async def fetch_report(year: int = 2026, category: int = 1) -> list[dict]:
         return data.get("reportTableData", [])
 
 
-def get_rhp_url(slug: str) -> str:
-    """Construct RHP PDF URL from IPO slug. No API call needed.
-
-    Pattern: https://www.chittorgarh.net/reports/ipo_notes/{slug}-rhp.pdf
-    Returns URL even if file doesn't exist — caller should verify with HEAD.
-    """
-    return f"{PDF_BASE}/{slug}-rhp.pdf"
+PDF_SUFFIXES = ["-rhp", "-drhp", "-prospectus"]
+"""Known PDF suffixes on Chittorgarh. Tried in order — returns first 200."""
 
 
-async def verify_rhp_url(slug: str) -> Optional[str]:
-    """Check if RHP PDF actually exists for this slug. Returns URL or None."""
-    url = get_rhp_url(slug)
+def make_pdf_url(slug: str, suffix: str) -> str:
+    """Construct a Chittorgarh PDF URL from slug and suffix."""
+    return f"{PDF_BASE}/{slug}{suffix}.pdf"
+
+
+async def verify_url(url: str) -> bool:
+    """HEAD-check a URL. Returns True if accessible (200)."""
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.head(url, headers=HEADERS, timeout=10, follow_redirects=True)
-            if resp.status_code == 200:
-                return url
+            return resp.status_code == 200
         except Exception:
-            pass
+            return False
+
+
+async def find_document_url(slug: str, prefer: Optional[list[str]] = None) -> Optional[str]:
+    """Try all known PDF suffixes on Chittorgarh, return first verified URL.
+
+    Args:
+        slug: Company slug (e.g. 'yaashvi-jewellers')
+        prefer: Optional suffix priority (e.g. ['-rhp', '-prospectus']).
+                Defaults to all known suffixes in declaration order.
+    """
+    suffixes = prefer or PDF_SUFFIXES
+    for suffix in suffixes:
+        url = make_pdf_url(slug, suffix)
+        if await verify_url(url):
+            return url
+    return None
+
+
+# ─── Backward-compatible aliases ─────────────────────────────
+
+
+def get_rhp_url(slug: str) -> str:
+    """Construct RHP PDF URL (DEPRECATED — use make_pdf_url + find_document_url)."""
+    return make_pdf_url(slug, "-rhp")
+
+
+async def verify_rhp_url(slug: str) -> Optional[str]:
+    """Backward-compatible: check only -rhp suffix. Use find_document_url for multi-suffix."""
+    url = make_pdf_url(slug, "-rhp")
+    if await verify_url(url):
+        return url
     return None

@@ -110,6 +110,7 @@ async def _download_pdf(url: str, client: httpx.AsyncClient) -> Optional[bytes]:
 
     headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
     if "bseindia.com" in url.lower(): headers["Referer"] = "https://www.bseindia.com/"
+    if "bsesme.com" in url.lower(): headers["Referer"] = "https://www.bsesme.com/"
     if "nsearchives.nseindia.com" in url.lower() or "nseindia.com" in url.lower():
         headers["Referer"] = "https://www.nseindia.com/"
 

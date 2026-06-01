@@ -47,13 +47,13 @@ def pick_best(field: str, sources: dict[str, Any]) -> tuple[Optional[Any], Optio
     return best_val, best_source
 
 
-async def check_chittorgarh_rhp(ipo_id: int, slug: Optional[str] = None) -> Optional[str]:
-    """Check Chittorgarh for RHP URL if no other source has it.
+async def check_chittorgarh_docs(ipo_id: int, slug: Optional[str] = None) -> dict[str, Optional[str]]:
+    """Check Chittorgarh for any document PDF URL (DRHP, RHP, Prospectus).
 
-    Uses Chittorgarh's direct PDF URL pattern: chittorgarh.net/reports/ipo_notes/{slug}-rhp.pdf
-    No HTML scraping needed — just a HEAD request to verify the URL exists.
+    Tries all known suffixes (-rhp, -drhp, -prospectus) via HEAD requests.
+    Returns dict with keys 'drhp', 'rhp', 'prospectus' — whichever exists.
     """
-    from app.clients.chittorgarh import verify_rhp_url, get_rhp_url
+    from app.clients.chittorgarh import find_document_url, PDF_SUFFIXES
 
     if not slug:
         from app.db.engine import get_session
@@ -61,21 +61,22 @@ async def check_chittorgarh_rhp(ipo_id: int, slug: Optional[str] = None) -> Opti
         with get_session() as s:
             ipo = s.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
             if not ipo:
-                return None
-            # Try to derive slug from company name
+                return {}
             from app.utils import normalize_company_name
             slug = normalize_company_name(ipo.company_name).lower().replace(" ", "-").replace("ipo-", "").replace("-ipo", "")
-            # Remove common suffixes
             for suffix in ["-ltd", "-limited", "-pvt-ltd", "-private-limited"]:
                 slug = slug.replace(suffix, "")
             slug = slug.strip("-")
 
-    logger.info(f"Chittorgarh: checking RHP for slug={slug}")
-    url = await verify_rhp_url(slug)
-    if url:
-        logger.info(f"Chittorgarh: found RHP at {url}")
-        return url
-    return None
+    logger.info(f"Chittorgarh: checking docs for slug={slug}")
+    result: dict[str, Optional[str]] = {}
+    for suffix in PDF_SUFFIXES:
+        url = await find_document_url(slug, prefer=[suffix])
+        if url:
+            doc_type = suffix.lstrip("-")  # "rhp", "drhp", "prospectus"
+            result[doc_type] = url
+            logger.info(f"Chittorgarh: found {doc_type} at {url}")
+    return result
 
 
 async def run_waterfall(ipo_id: int) -> dict[str, Any]:
@@ -133,10 +134,11 @@ async def run_waterfall(ipo_id: int) -> dict[str, Any]:
             sources.setdefault("close_date", {})["bse"] = b.get("end_date")
             sources.setdefault("price_band", {})["bse"] = b.get("price_band")
 
-        # ─── Fallback: Chittorgarh for missing RHP ─────────────
-        # Only check if IPO has no RHP URL and has a status suggesting docs exist
+        # ─── Fallback: Chittorgarh for missing DRHP/RHP ──────────
+        # Only check if IPO status suggests docs might exist
+        current_drhp = pick_best("drhp_url", sources.get("drhp_url", {}))[0]
         current_rhp = pick_best("rhp_url", sources.get("rhp_url", {}))[0]
-        if not current_rhp and ipo.status not in ("unknown", "discovered"):
+        if (not current_drhp or not current_rhp) and ipo.status not in ("unknown", "discovered"):
             slug = None
             # Build slug from company name
             from app.utils import normalize_company_name
@@ -145,9 +147,16 @@ async def run_waterfall(ipo_id: int) -> dict[str, Any]:
             import re
             slug = re.sub(r"[^a-z0-9-]", "", slug).strip("-")
 
-            chitto_url = await check_chittorgarh_rhp(ipo_id, slug=slug)
-            if chitto_url:
-                sources.setdefault("rhp_url", {})["chittorgarh"] = chitto_url
+            chitto_docs = await check_chittorgarh_docs(ipo_id, slug=slug)
+            if not current_drhp and chitto_docs.get("drhp"):
+                sources.setdefault("drhp_url", {})["chittorgarh"] = chitto_docs["drhp"]
+            if not current_rhp and chitto_docs.get("rhp"):
+                sources.setdefault("rhp_url", {})["chittorgarh"] = chitto_docs["rhp"]
+            # If neither drhp nor rhp found, try prospectus as RHP fallback
+            if not current_rhp and not chitto_docs.get("rhp") and chitto_docs.get("prospectus"):
+                sources.setdefault("rhp_url", {})["chittorgarh"] = chitto_docs["prospectus"]
+            if not current_drhp and not chitto_docs.get("drhp") and chitto_docs.get("prospectus"):
+                sources.setdefault("drhp_url", {})["chittorgarh"] = chitto_docs["prospectus"]
 
         # Pick best values and build provenance
         updates = {}
