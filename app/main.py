@@ -714,6 +714,29 @@ async def dashboard_stats():
     stats["api_version"] = "3.0.0"
     return stats
 
+@app.post("/api/clear-db", tags=["System"],
+    summary="WARNING: Clears all parsed data and IPOs from the database")
+async def clear_database(
+    confirm: str = Query(..., description="Pass ?confirm=yes to actually clear"),
+    internal_key: str = Query(None, description="Internal API key for auth"),
+):
+    if confirm != "yes":
+        return {"error": "pass ?confirm=yes"}
+    from app.config import settings
+    if internal_key != settings.internal_api_key:
+        return {"error": "invalid internal key"}
+    from sqlalchemy import text
+    from .db.engine import get_session
+    with get_session() as s:
+        s.execute(text("DELETE FROM document_tables"))
+        s.execute(text("UPDATE document_sections SET parsed=0, parsed_data=NULL, parsed_md_sha256=NULL, parsed_at=NULL"))
+        s.execute(text("UPDATE ipo_master SET unified_data=NULL, unified_provenance=NULL, unified_version=0, unified_updated_at=NULL, confidence_score=0.0, publish_status='new', validation_issues=NULL"))
+        s.execute(text("DELETE FROM ipo_documents"))
+        s.execute(text("DELETE FROM ipo_master"))
+        s.commit()
+    return {"status": "ok", "message": "Database cleared"}
+
+
 @app.get("/api/dashboard/logs", response_model=list[ScraperLogItem], tags=["Dashboard"])
 async def dashboard_logs(limit: int = Query(50, ge=1, le=200)):
     return db_service.get_recent_logs(limit=limit)
