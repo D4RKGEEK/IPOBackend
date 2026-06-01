@@ -233,6 +233,76 @@ def _render_plumber_page(page, tabulate_module) -> str:
     return page_text
 
 
+def _clean_headers_rows(headers: list[str], rows: list[list[str]]) -> Optional[dict]:
+    """Remove empty columns from headers+rows, merging shifted column pairs.
+
+    pdfplumber often splits merged/spanning cells into separate columns,
+    creating a 1-column offset between header text and data text.
+    This function detects and merges those pairs.
+
+    Returns {"headers": [str], "rows": [list[str]]} or None if no data rows remain.
+    """
+    if not headers and not rows:
+        return None
+
+    all_rows = [headers] + (rows or [])
+    num_cols = max(len(r) for r in all_rows)
+    col_has_data = [False] * num_cols
+    for row in all_rows:
+        for ci in range(min(len(row), num_cols)):
+            if row[ci].strip():
+                col_has_data[ci] = True
+
+    keep_idx = [ci for ci, has in enumerate(col_has_data) if has]
+    if not keep_idx:
+        return None
+
+    def _keep(row):
+        return [row[ci] for ci in keep_idx if ci < len(row)]
+
+    clean_headers = _keep(headers)
+    clean_rows = [_keep(r) for r in (rows or [])]
+
+    # Detect and merge shifted column pairs.
+    # Pattern: col A has data but no header, col B (adjacent) has header but no data.
+    # Merge: header from B, data from A for each pair.
+    merged_idx = []
+    i = 0
+    while i < len(clean_headers):
+        h_here = bool(clean_headers[i].strip())
+        data_here = any(r[i].strip() for r in clean_rows if i < len(r)) if clean_rows else False
+
+        if h_here and not data_here and i > 0:
+            prev_h = bool(clean_headers[i - 1].strip())
+            prev_data = any(r[i - 1].strip() for r in clean_rows if i - 1 < len(r)) if clean_rows else False
+            if not prev_h and prev_data:
+                i += 1
+                continue
+
+        if not h_here and data_here and i + 1 < len(clean_headers):
+            nxt_h = bool(clean_headers[i + 1].strip())
+            nxt_data = any(r[i + 1].strip() for r in clean_rows if i + 1 < len(r)) if clean_rows else False
+            if nxt_h and not nxt_data:
+                clean_headers[i] = clean_headers[i + 1]
+                merged_idx.append(i)
+                i += 2
+                continue
+
+        merged_idx.append(i)
+        i += 1
+
+    final_headers = [clean_headers[i] for i in merged_idx]
+    final_rows = []
+    for row in clean_rows:
+        final_rows.append([row[i] if i < len(row) else "" for i in merged_idx])
+
+    final_rows = [r for r in final_rows if any(c.strip() for c in r)]
+    if not final_rows:
+        return None
+
+    return {"headers": final_headers, "rows": final_rows}
+
+
 def _extract_page_structured(page, tabulate_module) -> tuple[str, list[dict]]:
     """Extract text + structured tables from a pdfplumber page.
 

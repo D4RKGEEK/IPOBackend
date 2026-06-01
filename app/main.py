@@ -414,7 +414,8 @@ async def get_ipo_tables(
 
     cached = get_tables(ipo_id, doc_type=doc_type, section_name=effective_section)
     if cached and not page_num:
-        # Restructure cached data same as fresh extraction
+        # Clean cached data — may have empty columns from raw pdfplumber
+        from app.section_resolver import _clean_headers_rows
         grouped: dict[str, Any] = {}
         for t in cached:
             sec = t.get("section_name", "unknown")
@@ -434,10 +435,26 @@ async def get_ipo_tables(
                 "headers": t.get("data", {}).get("headers", []),
                 "rows": t.get("data", {}).get("rows", []),
             })
+        # Clean: remove empty columns, merge shifted pairs, drop header-only tables
+        cleaned_sections = []
+        for sec_data in grouped.values():
+            clean_tables = []
+            for tbl in sec_data["tables"]:
+                cleaned = _clean_headers_rows(tbl["headers"], tbl["rows"])
+                if cleaned:
+                    clean_tables.append({
+                        "page": tbl["page"],
+                        "table_index": tbl["table_index"],
+                        "headers": cleaned["headers"],
+                        "rows": cleaned["rows"],
+                    })
+            if clean_tables:
+                sec_data["tables"] = clean_tables
+                cleaned_sections.append(sec_data)
         return {
             "ipo_id": ipo_id,
-            "sections": list(grouped.values()),
-            "total_tables": len(cached),
+            "sections": cleaned_sections,
+            "total_tables": sum(len(s["tables"]) for s in cleaned_sections),
             "source": "cache",
         }
 
@@ -454,7 +471,7 @@ async def get_ipo_tables(
 
         import httpx, pdfplumber, tempfile, os, time as _time
         from tabulate import tabulate
-        from app.section_resolver import _extract_page_structured
+        from app.section_resolver import _extract_page_structured, _clean_headers_rows
 
         t0 = _time.time()
         resp = httpx.get(rhp_url, timeout=120, follow_redirects=True)
@@ -543,10 +560,26 @@ async def get_ipo_tables(
                 "rows": t.get("rows", []),
             })
 
+        # Safety clean on fresh extraction too (parity with cache path)
+        clean_sections = []
+        for sec_data in grouped.values():
+            clean_tables = []
+            for tbl in sec_data["tables"]:
+                cleaned = _clean_headers_rows(tbl["headers"], tbl["rows"])
+                if cleaned:
+                    clean_tables.append({
+                        "page": tbl["page"],
+                        "table_index": tbl["table_index"],
+                        "headers": cleaned["headers"],
+                        "rows": cleaned["rows"],
+                    })
+            if clean_tables:
+                sec_data["tables"] = clean_tables
+                clean_sections.append(sec_data)
         return {
             "ipo_id": ipo_id,
-            "sections": list(grouped.values()),
-            "total_tables": len(results),
+            "sections": clean_sections,
+            "total_tables": sum(len(s["tables"]) for s in clean_sections),
             "extraction_ms": round(elapsed * 1000),
         }
     except MemoryError:
