@@ -10,6 +10,7 @@ Boot-time concerns:
 import logging
 import os
 from math import ceil
+from pathlib import Path
 from typing import Any, Optional
 
 # Auto-detect a usable SSL cert bundle without hardcoding macOS paths.
@@ -602,15 +603,57 @@ async def resolve_ipo_documents(ipo_id: int = Path(...)):
             mgr.update(tid, 0.1, "Starting...")
             async def _resolve():
                 async with httpx.AsyncClient(follow_redirects=True, timeout=180) as client:
-                    types = [("drhp","drhp"),("rhp","rhp"),("final_prospectus","fp")]
-                    for i,(dt,dk) in enumerate(types):
+                    # Pre-compute Chittorgarh slug for fallback
+                    _chitto_slug = None
+                    async def _chitto_fallback(dt: str, prefer_suffixes: Optional[list[str]] = None) -> Optional[str]:
+                        nonlocal _chitto_slug
+                        from app.clients.chittorgarh import find_document_url
+                        if _chitto_slug is None:
+                            import re
+                            slug = d.get("company_name","").lower().replace(" ipo","").replace(" ","-")
+                            slug = re.sub(r"[^a-z0-9-]","",slug).strip("-")
+                            for _s in ["-ltd","-limited","-pvt-ltd","-private-limited"]:
+                                slug = slug.replace(_s,"")
+                            _chitto_slug = slug
+                        return await find_document_url(_chitto_slug, prefer=prefer_suffixes)
+
+                    # Priority: RHP (max data) → DRHP (fallback). Skip FP (redundant).
+                    for dt, dk, prefer in [
+                        ("rhp", "rhp", ["-rhp", "-prospectus", "-drhp"]),
+                        ("drhp", "drhp", ["-drhp", "-prospectus"]),
+                    ]:
                         url = docs.get(dt) or d.get(f"{dt}_url")
-                        if not url: results[dt] = {"status":"skipped","reason":"no URL"}; continue
-                        mgr.update(tid, 0.1+(i/3)*0.8, f"Resolving {dt.upper()}...")
+                        if not url:
+                            url = await _chitto_fallback(dt, prefer)
+                        if not url:
+                            results[dt] = {"status":"skipped","reason":"no URL"}; continue
+                        mgr.update(tid, 0.1+(0.5 if dt == "rhp" else 0.9), f"Resolving {dt.upper()}...")
                         db_service.upsert_document(ipo_id, dt, url)
                         r = await resolve_document(ipo_id, dk, url, db_service, client)
-                        results[dt] = r
-                        if r.get("status") == "error": errors.append({"doc_type":dt,"error":r.get("error")})
+                        if r.get("status") == "error":
+                            # RHP failed — try DRHP as fallback before giving up
+                            if dt == "rhp":
+                                fallback_url = docs.get("drhp") or d.get("drhp_url")
+                                if not fallback_url:
+                                    fallback_url = await _chitto_fallback("drhp", ["-drhp", "-prospectus"])
+                                if fallback_url and fallback_url != url:
+                                    results["drhp_attempted"] = True
+                                    db_service.upsert_document(ipo_id, "drhp", fallback_url)
+                                    dr = await resolve_document(ipo_id, "drhp", fallback_url, db_service, client)
+                                    if dr.get("status") == "error":
+                                        errors.append({"doc_type":"rhp","error":r.get("error")})
+                                        errors.append({"doc_type":"drhp","error":dr.get("error")})
+                                    results[dt] = dr  # use the fallback result
+                                else:
+                                    errors.append({"doc_type":dt,"error":r.get("error")})
+                            else:
+                                errors.append({"doc_type":dt,"error":r.get("error")})
+                        else:
+                            # RHP succeeded — skip DRHP entirely
+                            results[dt] = r
+                            if dt == "rhp":
+                                results["drhp"] = {"status":"skipped","reason":"rhp_resolved_first"}
+                                break
             asyncio.run(_resolve())
             mgr.update(tid, 1.0, "Complete")
             return {"ipo_id":ipo_id,"company_name":ipo.company_name,"status":"completed",
@@ -713,6 +756,19 @@ async def dashboard_stats():
     stats = db_service.get_dashboard_stats()
     stats["api_version"] = "3.0.0"
     return stats
+
+
+@app.get("/dashboard", tags=["Dashboard"],
+    summary="Serve the v1 dashboard SPA",
+    description="Single-file HTML dashboard with Groww theme, CDN Tailwind, dark mode. "
+                "Reads dashboard.html from disk and returns it as a web page.")
+async def dashboard_page():
+    """Serve the dashboard HTML directly from the API — no separate server needed."""
+    dash_path = Path(__file__).resolve().parent.parent / "dashboard" / "dashboard.html"
+    if not dash_path.exists():
+        raise HTTPException(404, "dashboard.html not found — deploy the dashboard/ folder")
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(dash_path.read_text(encoding="utf-8"))
 
 @app.post("/api/clear-db", tags=["System"],
     summary="WARNING: Clears all parsed data and IPOs from the database")
