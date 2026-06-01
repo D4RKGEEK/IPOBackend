@@ -215,6 +215,107 @@ def _normalize_amounts(unified: dict) -> None:
         ]
 
 
+def _restructure_sectioned(unified: dict) -> dict:
+    """Restructure flat unified dict into section-wise groups.
+    
+    All values remain as strings. Missing fields are omitted.
+    """
+    sectioned: dict[str, Any] = {}
+
+    def _pick(fields: list[str]) -> dict[str, str]:
+        return {k: unified[k] for k in fields if k in unified and unified[k] not in (None, "", [], {})}
+
+    sectioned["company"] = _pick([
+        "cin", "company_name", "registered_address", "telephone", "email", "website",
+        "sector", "listing_exchange", "face_value",
+    ])
+
+    sectioned["timeline"] = _pick([
+        "bid_open_date", "bid_close_date", "allotment_date",
+        "refund_date", "credit_of_shares_date", "listing_date",
+    ])
+
+    sectioned["pricing"] = _pick([
+        "price_band", "face_value", "lot_size", "market_lot",
+        "minimum_application", "retail_min_lots",
+    ])
+
+    sectioned["issue_breakdown"] = _pick([
+        "total_issue_shares", "total_issue_amount",
+        "fresh_issue_shares", "offer_for_sale_shares",
+        "pre_issue_shares", "post_issue_shares",
+        "qib_shares", "anchor_shares", "qib_ex_anchor_shares",
+        "nii_shares", "bhnii_shares", "shnii_shares",
+        "retail_shares",
+        "market_maker_shares", "employee_shares",
+        "net_issue_to_public",
+        "qib_percent", "nii_percent", "retail_percent",
+    ])
+
+    sectioned["capital_structure"] = _pick([
+        "authorized_shares", "authorized_amount",
+        "paid_up_shares", "paid_up_amount",
+        "pre_issue_shares", "post_issue_shares",
+    ])
+
+    sectioned["financials"] = _pick([
+        "financial_years", "total_revenue", "total_income",
+        "profit_after_tax", "ebitda", "total_assets",
+        "net_worth", "reserves_and_surplus", "total_borrowings",
+    ])
+
+    sectioned["ratios"] = _pick([
+        "eps_basic", "eps_diluted", "nav_per_share",
+        "roe_percent", "roce_percent", "debt_equity_ratio",
+        "pe_ratio", "price_to_book_value",
+        "revenue_growth_percent", "pat_margin_percent",
+        "ebitda_margin_percent",
+    ])
+
+    sectioned["promoters"] = _pick([
+        "promoter_names", "promoter_group_names",
+        "promoter_holding_pre_ipo_percent", "promoter_holding_post_ipo_percent",
+    ])
+
+    sectioned["objects_of_issue"] = _pick([
+        "total_project_cost", "fund_usage_breakdown",
+    ])
+
+    sectioned["contacts"] = _pick([
+        "brlm_name", "brlm_phone", "brlm_email",
+        "registrar_name", "registrar_phone", "registrar_email", "registrar_website",
+        "statutory_auditor", "legal_advisor", "cfo_name", "company_secretary_name",
+    ])
+
+    if "application_lot_table" in unified:
+        sectioned["application_lot_table"] = unified["application_lot_table"]
+
+    # Keep any unrecognized fields in a catch-all
+    all_picked = set()
+    for v in sectioned.values():
+        if isinstance(v, dict):
+            all_picked.update(v.keys())
+    extras = {k: unified[k] for k in unified if k not in all_picked
+              and k != "application_lot_table"}
+    if extras:
+        sectioned["other"] = extras
+
+    # Convert numeric values to strings for consistency
+    def _ensure_str(val):
+        if isinstance(val, list):
+            return [_ensure_str(v) for v in val]
+        if isinstance(val, dict):
+            return {k: _ensure_str(v) for k, v in val.items()}
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            # Format: remove .0 for whole numbers
+            if val == int(val):
+                return str(int(val))
+            return str(val)
+        return val
+
+    return _ensure_str(sectioned)
+
+
 def build_unified(ipo_id: int) -> dict[str, Any]:
     """Build (or rebuild) ipo_master.unified_data from current parsed sections.
 
@@ -292,11 +393,14 @@ def build_unified(ipo_id: int) -> dict[str, Any]:
         # (must run AFTER provenance tracking so unit conversion doesn't cause false diffs)
         _normalize_amounts(unified)
 
+        # Restructure into section-wise groups (all values as strings)
+        sectioned = _restructure_sectioned(unified)
+
         # Bump unified_version only if anything actually changed
         previous = ipo.unified_data or {}
-        changed = previous != unified
+        changed = previous != sectioned
 
-        ipo.unified_data = unified
+        ipo.unified_data = sectioned
         ipo.unified_provenance = provenance
         if changed:
             ipo.unified_version = (ipo.unified_version or 0) + 1
@@ -310,7 +414,7 @@ def build_unified(ipo_id: int) -> dict[str, Any]:
         "[unified] ipo=%d fields=%d confidence=%.2f publish_status=%s issues=%d",
         ipo_id, len(unified), result.confidence_score, result.publish_status, len(result.issues),
     )
-    return unified
+    return sectioned
 
 
 def diff_unified(previous: dict, current: dict) -> dict:
