@@ -718,13 +718,10 @@ async def dashboard_stats():
     summary="WARNING: Clears all parsed data and IPOs from the database")
 async def clear_database(
     confirm: str = Query(..., description="Pass ?confirm=yes to actually clear"),
-    internal_key: str = Query(None, description="Internal API key for auth"),
+    _auth: None = Depends(_require_internal_key),
 ):
     if confirm != "yes":
         return {"error": "pass ?confirm=yes"}
-    from app.config import settings
-    if internal_key != settings.internal_api_key:
-        return {"error": "invalid internal key"}
     from sqlalchemy import text
     from .db.engine import get_session
     with get_session() as s:
