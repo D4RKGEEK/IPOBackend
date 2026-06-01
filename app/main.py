@@ -387,18 +387,38 @@ async def get_ipo_parsed_all(ipo_id: int = Path(...)):
 async def get_ipo_tables(
     ipo_id: int = Path(...),
     doc_type: Optional[str] = Query(None, description="Filter: drhp / rhp / fp"),
-    section_name: Optional[str] = Query(None, description="Filter: e.g. CAPITAL_STRUCTURE"),
+    section_name: Optional[str] = Query(None, description="Section name (e.g. CAPITAL_STRUCTURE, ISSUE_STRUCTURE). Auto-resolves page range from resolve step."),
     page_num: Optional[int] = Query(None, description="Extract tables from this page only (1-indexed). Safe on any RAM."),
 ):
     from app.db.operations import get_tables, save_tables
-    cached = get_tables(ipo_id, doc_type=doc_type, section_name=section_name)
+    from app.db.models import DocumentSection
+    from app.db.engine import get_session
+
+    # If section_name given, resolve page range from document_sections
+    effective_page = page_num
+    effective_section = section_name
+    if section_name and not page_num:
+        with get_session() as s:
+            sec = s.query(DocumentSection).filter(
+                DocumentSection.ipo_master_id == ipo_id,
+                DocumentSection.section_name == section_name,
+            ).first()
+            if sec and sec.page_start and sec.page_end:
+                effective_page = sec.page_start
+                pages_to_extract = list(range(sec.page_start, sec.page_end + 1))
+            elif sec and sec.page_start:
+                effective_page = sec.page_start
+                pages_to_extract = [sec.page_start]
+            else:
+                return {"error": f"section '{section_name}' has no page range"}
+
+    cached = get_tables(ipo_id, doc_type=doc_type, section_name=effective_section)
     if cached and not page_num:
-        # Tables already cached — optionally filter by page
-        if page_num:
-            return [t for t in cached if t.get("page_num") == page_num]
+        if effective_section:
+            return cached
         return cached
 
-    # No tables cached — extract on-demand (single page if page_num given, otherwise ALL)
+    # No tables cached — extract on-demand
     try:
         from app.db.operations import DatabaseService
         db = DatabaseService()
@@ -409,11 +429,11 @@ async def get_ipo_tables(
         if not rhp_url:
             return {"error": "no RHP URL available"}
 
-        import httpx, pdfplumber, tempfile, os
+        import httpx, pdfplumber, tempfile, os, time as _time
         from tabulate import tabulate
         from app.section_resolver import _extract_page_structured
 
-        # Download only — then open with pdfplumber
+        t0 = _time.time()
         resp = httpx.get(rhp_url, timeout=120, follow_redirects=True)
         if resp.status_code != 200:
             return {"error": f"HTTP {resp.status_code}"}
@@ -425,10 +445,25 @@ async def get_ipo_tables(
             f.write(resp.content)
 
         plumber = pdfplumber.open(tmp_path)
+        total_pages = len(plumber.pages)
         results = []
 
-        if page_num:
-            # Single page — safe on any RAM
+        if effective_section and not page_num:
+            # Multiple pages from a section (~0.5s per page)
+            for pn in pages_to_extract:
+                idx = pn - 1
+                if idx < 0 or idx >= len(plumber.pages):
+                    continue
+                page = plumber.pages[idx]
+                _, tables = _extract_page_structured(page, tabulate)
+                for t in tables:
+                    t["page_num"] = pn
+                    t["doc_type"] = doc_type or "rhp"
+                    t["section_name"] = effective_section
+                    results.append(t)
+            elapsed = _time.time() - t0
+        elif page_num:
+            # Single page (~0.5s)
             idx = page_num - 1
             if idx < 0 or idx >= len(plumber.pages):
                 plumber.close()
@@ -439,10 +474,11 @@ async def get_ipo_tables(
             for t in tables:
                 t["page_num"] = page_num
                 t["doc_type"] = doc_type or "rhp"
-                t["section_name"] = section_name or "all"
+                t["section_name"] = effective_section or "all"
                 results.append(t)
+            elapsed = _time.time() - t0
         else:
-            # ALL pages — may OOM on large PDFs. Warn + try anyway.
+            # ALL pages
             for pn in range(len(plumber.pages)):
                 page = plumber.pages[pn]
                 try:
@@ -450,23 +486,26 @@ async def get_ipo_tables(
                     for t in tables:
                         t["page_num"] = pn + 1
                         t["doc_type"] = doc_type or "rhp"
-                        t["section_name"] = section_name or "all"
+                        t["section_name"] = effective_section or "all"
                         results.append(t)
                 except MemoryError:
-                    results.append({"error": f"OOM on page {pn+1} — use ?page_num=N to extract one at a time"})
+                    results.append({"error": f"OOM on page {pn+1}"})
                     break
+            elapsed = _time.time() - t0
 
         plumber.close()
         os.unlink(tmp_path)
 
-        if results and doc_type and section_name and not page_num:
-            save_tables(ipo_id, doc_type, section_name, results)
+        if results and doc_type and effective_section and not page_num:
+            save_tables(ipo_id, doc_type, effective_section, results)
 
-        return results
+        return {
+            "tables": results,
+            "extraction_time_s": round(elapsed, 1),
+            "pages_extracted": len(pages_to_extract) if (effective_section and not page_num) else (1 if page_num else len(plumber.pages)),
+        }
     except MemoryError:
-        return {"error": "Out of memory — use ?page_num=N to extract one page at a time"}
-    except Exception as e:
-        return {"error": f"table extraction failed: {str(e)}"}
+        return {"error": "Out of memory — pass ?section_name=CAPITAL_STRUCTURE to extract a specific section"}
 
 
 # ─── Resolve (background) ──────────────────────────────────
