@@ -95,6 +95,14 @@ class Settings(BaseSettings):
                 url = "postgresql://" + url[len("postgres://"):]
             if url.startswith("postgresql://"):
                 url = "postgresql+psycopg://" + url[len("postgresql://"):]
+            # Strip query params that psycopg v3 doesn't support
+            # (pgbouncer mode, prepared_statement_cache_size, etc.)
+            from urllib.parse import urlparse, urlunparse
+            parsed = urlparse(url)
+            if parsed.query:
+                allowed = {"sslmode", "connect_timeout", "application_name"}
+                keep = [p for p in parsed.query.split("&") if p.split("=")[0] in allowed]
+                url = urlunparse(parsed._replace(query="&".join(keep)))
             return url
         return f"sqlite:///{self.ipos_db_path}"
 
