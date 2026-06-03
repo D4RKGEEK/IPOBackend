@@ -6,6 +6,9 @@ Flow:
   2. Scan all pages for known section headers → page ranges
   3. Extract each section's text → save to DB
 """
+import asyncio
+import atexit
+import concurrent.futures
 import io, logging, os, re, tempfile, zipfile
 from typing import Optional
 
@@ -63,6 +66,16 @@ KNOWN_SECTIONS = [
 ]
 
 MAX_DOWNLOAD_SIZE = 50 * 1024 * 1024
+
+_pdf_executor: Optional[concurrent.futures.ProcessPoolExecutor] = None
+
+
+def _get_pdf_executor() -> concurrent.futures.ProcessPoolExecutor:
+    global _pdf_executor
+    if _pdf_executor is None:
+        _pdf_executor = concurrent.futures.ProcessPoolExecutor(max_workers=2)
+        atexit.register(_pdf_executor.shutdown, wait=False)
+    return _pdf_executor
 
 
 def _section_key(name: str) -> str:
@@ -382,9 +395,48 @@ def _extract_page_pymupdf(pdf_path: str, page_num: int) -> str:
     return text
 
 
+def _extract_pages_batch(pdf_path: str, page_nums: list) -> dict:
+    """Extract text from multiple pages in one pymupdf open. Returns {0-index: text}."""
+    import pymupdf, gc
+    result = {}
+    with pymupdf.open(pdf_path) as doc:
+        for pn in page_nums:
+            if 0 <= pn < doc.page_count:
+                try:
+                    result[pn] = doc[pn].get_text("text").strip()
+                except Exception:
+                    result[pn] = ""
+    gc.collect()
+    return result
+
+
+def _extract_tables_worker(pdf_path: str, page_nums) -> list:
+    """Open pdfplumber once and extract tables from 1-indexed page_nums (None=all pages)."""
+    import pdfplumber, gc
+    from tabulate import tabulate
+    results = []
+    with pdfplumber.open(pdf_path) as plumber:
+        total = len(plumber.pages)
+        to_process = page_nums if page_nums is not None else list(range(1, total + 1))
+        for pn in to_process:
+            idx = pn - 1
+            if 0 <= idx < total:
+                try:
+                    _, tables = _extract_page_structured(plumber.pages[idx], tabulate)
+                    for t in tables:
+                        t["page_num"] = pn
+                    results.extend(tables)
+                except MemoryError:
+                    results.append({"error": f"OOM on page {pn}", "page_num": pn})
+                    break
+                except Exception:
+                    pass
+    gc.collect()
+    return results
+
+
 async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, client: httpx.AsyncClient, stream_download: bool = False) -> dict:
     from app.notifications import notify
-    import pymupdf
     import gc
     
     tmp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
@@ -404,10 +456,12 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
                 with open(tmp_path, 'rb') as f:
                     zip_bytes = f.read()
                 pdf_bytes = _extract_pdf_from_zip(zip_bytes)
+                del zip_bytes
                 if pdf_bytes is None:
                     return {"status": "error", "doc_type": doc_type, "error": "no_pdf_in_zip"}
                 with open(tmp_path, 'wb') as f:
                     f.write(pdf_bytes)
+                del pdf_bytes
         else:
             raw = await _download_pdf(url, client)
             if raw is None:
@@ -415,36 +469,48 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
             is_zip = url.lower().endswith(".zip") or raw[:4] == b'PK\x03\x04'
             if is_zip:
                 pdf_bytes = _extract_pdf_from_zip(raw)
+                del raw
                 if pdf_bytes is None:
                     return {"status": "error", "doc_type": doc_type, "error": "no_pdf_in_zip"}
             else:
                 pdf_bytes = raw
+                raw = None
             with open(tmp_path, 'wb') as f: f.write(pdf_bytes)
-        pdf_doc = pymupdf.open(tmp_path)
-        total_pages = pdf_doc.page_count
-        pdf_doc.close()
-        page_entries = _find_sections_in_doc(tmp_path, total_pages)
+            del pdf_bytes
+        gc.collect()
+
+        import pymupdf as _pm
+        with _pm.open(tmp_path) as _pd:
+            total_pages = _pd.page_count
+        loop = asyncio.get_running_loop()
+        page_entries = await loop.run_in_executor(_get_pdf_executor(), _find_sections_in_doc, tmp_path, total_pages)
         sections = _page_range_entries(page_entries, total_pages)
         db_service.delete_sections(ipo_id, doc_type)
         saved_sections = []
 
-        # Open pdfplumber ONCE for all section extractions (but use pymupdf for text
-        # during resolve to keep RAM low — pdfplumber can OOM on 500MB containers)
-        import pymupdf as _pm
-
         try:
+            all_page_idxs = sorted(set(
+                pn
+                for sec in sections
+                if sec["page_start"] and sec["page_start"] <= total_pages
+                for pn in range(sec["page_start"] - 1, min(sec["page_end"], total_pages))
+            ))
+            page_texts: dict = {}
+            if all_page_idxs:
+                page_texts = await loop.run_in_executor(
+                    _get_pdf_executor(), _extract_pages_batch, tmp_path, all_page_idxs
+                )
+
             for sec in sections:
                 section_name = sec["section_name"]
                 ps, pe = sec["page_start"], sec["page_end"]
                 if ps and ps <= total_pages:
-                    section_text = ""
-                    for pn in range(ps - 1, min(pe, total_pages)):
-                        try:
-                            ft = _extract_page_pymupdf(tmp_path, pn)
-                            if ft:
-                                section_text += f"\n\n--- Page {pn + 1} ---\n\n{ft}"
-                        except Exception:
-                            pass
+                    parts = [
+                        f"--- Page {pn + 1} ---\n\n{page_texts[pn]}"
+                        for pn in range(ps - 1, min(pe, total_pages))
+                        if page_texts.get(pn)
+                    ]
+                    section_text = "\n\n".join(parts)
                     db_service.upsert_section(ipo_id, doc_type, section_name, page_start=ps, page_end=pe, raw_md=section_text)
 
                     r2_url = None

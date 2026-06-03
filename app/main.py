@@ -474,7 +474,10 @@ async def get_ipo_tables(
 
     # No tables cached — extract on-demand
     try:
+        import asyncio as _aio, tempfile, os, time as _time
         from app.db.operations import DatabaseService
+        from app.section_resolver import _extract_tables_worker, _clean_headers_rows, _get_pdf_executor
+
         db = DatabaseService()
         ipo = db.get_ipo_by_id(ipo_id)
         if not ipo:
@@ -483,72 +486,45 @@ async def get_ipo_tables(
         if not rhp_url:
             return {"error": "no RHP URL available"}
 
-        import httpx, pdfplumber, tempfile, os, time as _time
-        from tabulate import tabulate
-        from app.section_resolver import _extract_page_structured, _clean_headers_rows
-
         t0 = _time.time()
-        resp = httpx.get(rhp_url, timeout=120, follow_redirects=True)
+        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as _dl_client:
+            resp = await _dl_client.get(rhp_url)
         if resp.status_code != 200:
             return {"error": f"HTTP {resp.status_code}"}
 
         tmp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
         tmp_path = tmp.name
         tmp.close()
-        with open(tmp_path, 'wb') as f:
-            f.write(resp.content)
+        try:
+            with open(tmp_path, 'wb') as f:
+                f.write(resp.content)
+            del resp
 
-        plumber = pdfplumber.open(tmp_path)
-        total_pages = len(plumber.pages)
-        results = []
+            if effective_section and not page_num:
+                worker_pages = pages_to_extract
+            elif page_num:
+                worker_pages = [page_num]
+            else:
+                worker_pages = None  # all pages
 
-        if effective_section and not page_num:
-            # Multiple pages from a section (~0.5s per page)
-            for pn in pages_to_extract:
-                idx = pn - 1
-                if idx < 0 or idx >= len(plumber.pages):
-                    continue
-                page = plumber.pages[idx]
-                _, tables = _extract_page_structured(page, tabulate)
-                for t in tables:
-                    t["page_num"] = pn
-                    t["doc_type"] = doc_type or "rhp"
-                    t["section_name"] = effective_section
-                    results.append(t)
-            elapsed = _time.time() - t0
-        elif page_num:
-            # Single page (~0.5s)
-            idx = page_num - 1
-            if idx < 0 or idx >= len(plumber.pages):
-                plumber.close()
+            loop = _aio.get_running_loop()
+            raw_results = await loop.run_in_executor(
+                _get_pdf_executor(), _extract_tables_worker, tmp_path, worker_pages
+            )
+        finally:
+            try:
                 os.unlink(tmp_path)
-                return {"error": f"page_num {page_num} out of range (1-{len(plumber.pages)})"}
-            page = plumber.pages[idx]
-            _, tables = _extract_page_structured(page, tabulate)
-            for t in tables:
-                t["page_num"] = page_num
-                t["doc_type"] = doc_type or "rhp"
-                t["section_name"] = effective_section or "all"
-                results.append(t)
-            elapsed = _time.time() - t0
-        else:
-            # ALL pages
-            for pn in range(len(plumber.pages)):
-                page = plumber.pages[pn]
-                try:
-                    _, tables = _extract_page_structured(page, tabulate)
-                    for t in tables:
-                        t["page_num"] = pn + 1
-                        t["doc_type"] = doc_type or "rhp"
-                        t["section_name"] = effective_section or "all"
-                        results.append(t)
-                except MemoryError:
-                    results.append({"error": f"OOM on page {pn+1}"})
-                    break
-            elapsed = _time.time() - t0
+            except Exception:
+                pass
 
-        plumber.close()
-        os.unlink(tmp_path)
+        elapsed = _time.time() - t0
+        eff_doc = doc_type or "rhp"
+        eff_section_label = effective_section or "all"
+        results = []
+        for t in raw_results:
+            t["doc_type"] = eff_doc
+            t["section_name"] = eff_section_label
+            results.append(t)
 
         if results and doc_type and effective_section and not page_num:
             save_tables(ipo_id, doc_type, effective_section, results)
