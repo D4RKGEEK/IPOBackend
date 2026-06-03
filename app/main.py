@@ -810,6 +810,8 @@ async def pipeline_auto(
                 _update_stats(0.25)
                 
                 ipos, _ = db_service.get_all_ipos(year=year, per_page=1000)
+                # Convert ORM objects to plain dicts so we can use .get() safely
+                ipos = [ipo.to_dict() if hasattr(ipo, 'to_dict') else ipo for ipo in ipos]
                 stats["total_ipos_checked"] = len(ipos)
 
                 to_resolve = []
@@ -817,15 +819,21 @@ async def pipeline_auto(
                 
                 for ipo in ipos:
                     needs_resolve = False
-                    if ipo.get("rhp_url") and not ipo.get("rhp_processed"):
+                    docs = ipo.get("documents", {})
+                    rhp_url = docs.get("rhp") if isinstance(docs, dict) else ipo.get("rhp_url")
+                    drhp_url = docs.get("drhp") if isinstance(docs, dict) else ipo.get("drhp_url")
+                    rhp_processed = ipo.get("rhp_processed", False)
+                    drhp_processed = ipo.get("drhp_processed", False)
+
+                    if rhp_url and not rhp_processed:
                         needs_resolve = True
-                    elif ipo.get("drhp_url") and not ipo.get("drhp_processed"):
+                    elif drhp_url and not drhp_processed:
                         needs_resolve = True
                         
                     if needs_resolve:
                         to_resolve.append(ipo)
                     else:
-                        if not ipo.get("unified_updated_at") and (ipo.get("rhp_processed") or ipo.get("drhp_processed")):
+                        if not ipo.get("unified_updated_at") and (rhp_processed or drhp_processed):
                             to_parse.append(ipo)
 
                 stats["pending_resolve"] = len(to_resolve)
@@ -835,8 +843,8 @@ async def pipeline_auto(
                 # 3. Resolve Loop
                 stats["stage"] = "resolving"
                 for idx, ipo in enumerate(to_resolve):
-                    stats["current_ipo"] = ipo["company_name"]
-                    stats["current_action"] = f"Resolving {ipo['company_name']} ({idx+1}/{len(to_resolve)})"
+                    stats["current_ipo"] = ipo.get("company_name", str(ipo.get("id")))
+                    stats["current_action"] = f"Resolving {ipo.get('company_name')} ({idx+1}/{len(to_resolve)})"
                     _update_stats(0.3 + (0.3 * (idx / max(1, len(to_resolve)))))
                     
                     try:
@@ -855,15 +863,15 @@ async def pipeline_auto(
                                     stats["resolved_failed"] += 1
                                 break
                     except Exception as e:
-                        logger.error(f"Auto pipeline resolve failed for {ipo['id']}: {e}")
+                        logger.error(f"Auto pipeline resolve failed for {ipo.get('id')}: {e}")
                         stats["resolved_failed"] += 1
 
                 # 4. Parse Loop
                 stats["stage"] = "parsing"
                 stats["pending_parse"] = len(to_parse)
                 for idx, ipo in enumerate(to_parse):
-                    stats["current_ipo"] = ipo["company_name"]
-                    stats["current_action"] = f"Parsing {ipo['company_name']} ({idx+1}/{len(to_parse)})"
+                    stats["current_ipo"] = ipo.get("company_name", str(ipo.get("id")))
+                    stats["current_action"] = f"Parsing {ipo.get('company_name')} ({idx+1}/{len(to_parse)})"
                     _update_stats(0.6 + (0.35 * (idx / max(1, len(to_parse)))))
                     
                     try:
@@ -880,7 +888,7 @@ async def pipeline_auto(
                                     stats["parsed_failed"] += 1
                                 break
                     except Exception as e:
-                        logger.error(f"Auto pipeline parse failed for {ipo['id']}: {e}")
+                        logger.error(f"Auto pipeline parse failed for {ipo.get('id')}: {e}")
                         stats["parsed_failed"] += 1
 
                 stats["stage"] = "completed"
