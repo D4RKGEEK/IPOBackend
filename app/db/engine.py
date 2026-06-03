@@ -25,14 +25,19 @@ def get_engine():
     global _engine
     if _engine is None:
         url = _resolve_db_url()
+        # Ensure we use psycopg v3 (installed as 'psycopg') not the missing psycopg2.
+        # SQLAlchemy defaults to psycopg2 for plain postgresql:// URLs.
+        if url.startswith("postgresql://") or url.startswith("postgres://"):
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+            url = url.replace("postgres://", "postgresql+psycopg://", 1)
         kwargs = {}
         if url.startswith("sqlite"):
             kwargs["connect_args"] = {"check_same_thread": False}
         if url.startswith("postgresql"):
             kwargs.update({
                 "pool_pre_ping": True,
-                "pool_size": 5,
-                "max_overflow": 5,
+                "pool_size": 15,
+                "max_overflow": 30,
                 "connect_args": {"prepare_threshold": None},
             })
         _engine = create_engine(url, echo=False, **kwargs)

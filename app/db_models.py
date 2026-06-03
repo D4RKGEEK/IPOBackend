@@ -321,6 +321,10 @@ def get_engine(db_path: Optional[str] = None):
     global _engine
     if _engine is None:
         url = _resolve_db_url(db_path)
+        # Ensure psycopg v3 is used (installed as 'psycopg', not 'psycopg2').
+        if url.startswith("postgresql://") or url.startswith("postgres://"):
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+            url = url.replace("postgres://", "postgresql+psycopg://", 1)
         _engine = create_engine(url, echo=False, **_engine_kwargs(url))
     return _engine
 
@@ -334,6 +338,13 @@ def get_session(db_path: Optional[str] = None) -> Session:
 
 
 def init_db(db_path: Optional[str] = None):
-    """Create all tables. Safe to call multiple times."""
+    """Create all tables. Safe to call multiple times.
+
+    Skipped for PostgreSQL (Supabase) — tables are managed by Alembic migrations
+    and calling create_all() via PgBouncer transaction-mode pooler hangs.
+    """
     engine = get_engine(db_path)
+    url = str(engine.url)
+    if "postgresql" in url or "postgres" in url:
+        return  # Tables already exist in Supabase; use alembic for migrations
     Base.metadata.create_all(engine)

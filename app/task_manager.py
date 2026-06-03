@@ -138,11 +138,12 @@ class _TaskStore:
     def start(self, task_id: str) -> None:
         self._mutate(task_id, lambda t: t.update(status="running", started_at=time.time()))
 
-    def update(self, task_id: str, progress: float = 0.0, progress_label: str = "", message: str = "") -> None:
+    def update(self, task_id: str, progress: float = 0.0, progress_label: str = "", message: str = "", result: Any = None) -> None:
         def _apply(t):
             t["progress"] = progress
             if progress_label: t["progress_label"] = progress_label
             if message: t["message"] = message
+            if result is not None: t["result"] = result
         self._mutate(task_id, _apply)
 
     def complete(self, task_id: str, result: Any = None) -> None:
@@ -210,6 +211,10 @@ def get_manager() -> _TaskStore:
     return _store
 
 
+import concurrent.futures
+
+_task_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="task")
+
 async def run_in_background(task_id: str, fn, *args, **kwargs) -> None:
     """Run a function in a daemon thread, tracking progress + persisting state."""
     manager = get_manager()
@@ -223,4 +228,4 @@ async def run_in_background(task_id: str, fn, *args, **kwargs) -> None:
             logger.exception("Task %s failed", task_id)
             manager.fail(task_id, str(e))
 
-    threading.Thread(target=_run, daemon=True, name=f"task-{task_id}").start()
+    _task_executor.submit(_run)

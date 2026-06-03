@@ -108,8 +108,10 @@ POST /api/refresh                       → Re-scrape (background)
 """
 
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 app = FastAPI(title="IPO Aggregation API", version="3.0.0", description=DESCRIPTION)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ─── Services ─────────────────────────────────────────────────
@@ -225,7 +227,9 @@ async def get_task(task_id: str = Path(...)):
     return task
 
 
-# ─── Main API — IPO Listing ─────────────────────────────────
+import time as _time
+_ipos_cache = {}
+
 @app.get("/api/ipos", response_model=IPOResponse, tags=["Aggregation"],
     summary="List all IPOs — clean, DB-backed, always fast",
     description="Filters: documents (drhp,rhp,fp,any,comma-sep), status, search, year, page")
@@ -235,8 +239,17 @@ async def get_ipos(
     search: str = Query(""), year: Optional[int] = Query(None),
     page: int = Query(1, ge=1), per_page: int = Query(25, ge=1, le=100),
 ):
-    ipos, total = db_service.get_all_ipos(status=status, platform=platform, search=search,
-                                          year=year, documents=documents, page=page, per_page=per_page)
+    global _ipos_cache
+    cache_key = f"{documents}_{status}_{platform}_{search}_{year}_{page}_{per_page}"
+    now = _time.time()
+    
+    if cache_key in _ipos_cache and now < _ipos_cache[cache_key]["expires"]:
+        ipos, total = _ipos_cache[cache_key]["data"]
+    else:
+        ipos, total = db_service.get_all_ipos(status=status, platform=platform, search=search,
+                                              year=year, documents=documents, page=page, per_page=per_page)
+        _ipos_cache[cache_key] = {"expires": now + 60, "data": (ipos, total)}
+
     return IPOResponse(data=[_format_ipo(ipo) for ipo in ipos],
         pagination=Pagination(total_records=total, current_page=page, per_page=per_page,
                               total_pages=max(1, ceil(total / per_page)) if total else 1),
@@ -577,6 +590,10 @@ async def get_ipo_tables(
             if clean_tables:
                 sec_data["tables"] = clean_tables
                 clean_sections.append(sec_data)
+        
+        import gc
+        gc.collect()
+
         return {
             "ipo_id": ipo_id,
             "sections": clean_sections,
@@ -589,7 +606,7 @@ async def get_ipo_tables(
 
 # ─── Resolve (background) ──────────────────────────────────
 @app.post("/api/ipos/{ipo_id}/resolve", tags=["Aggregation"])
-async def resolve_ipo_documents(ipo_id: int = Path(...)):
+async def resolve_ipo_documents(ipo_id: int = Path(...), stream: bool = Query(False)):
     ipo = db_service.get_ipo_by_id(ipo_id)
     if not ipo: raise HTTPException(404, "IPO not found")
     task_id = get_manager().create("resolve", f"Resolve {ipo.company_name}")
@@ -629,7 +646,7 @@ async def resolve_ipo_documents(ipo_id: int = Path(...)):
                             results[dt] = {"status":"skipped","reason":"no URL"}; continue
                         mgr.update(tid, 0.1+(0.5 if dt == "rhp" else 0.9), f"Resolving {dt.upper()}...")
                         db_service.upsert_document(ipo_id, dt, url)
-                        r = await resolve_document(ipo_id, dk, url, db_service, client)
+                        r = await resolve_document(ipo_id, dk, url, db_service, client, stream_download=stream)
                         if r.get("status") == "error":
                             # RHP failed — try DRHP as fallback before giving up
                             if dt == "rhp":
@@ -639,7 +656,7 @@ async def resolve_ipo_documents(ipo_id: int = Path(...)):
                                 if fallback_url and fallback_url != url:
                                     results["drhp_attempted"] = True
                                     db_service.upsert_document(ipo_id, "drhp", fallback_url)
-                                    dr = await resolve_document(ipo_id, "drhp", fallback_url, db_service, client)
+                                    dr = await resolve_document(ipo_id, "drhp", fallback_url, db_service, client, stream_download=stream)
                                     if dr.get("status") == "error":
                                         errors.append({"doc_type":"rhp","error":r.get("error")})
                                         errors.append({"doc_type":"drhp","error":dr.get("error")})
@@ -742,6 +759,142 @@ async def refresh(
 
     await run_in_background(task_id, _run)
     return {"task_id":task_id,"status":"started","message":f"Scrape started in background. Poll GET /api/tasks/{task_id}"}
+
+
+# ─── Master Pipeline (background) ──────────────────────────
+@app.post("/api/pipeline/auto", tags=["Aggregation"],
+    summary="Master Orchestrator: Scrapes, Resolves, and Parses sequentially")
+async def pipeline_auto(
+    year: Optional[int] = Query(2026, description="Limit to a specific filing year"),
+    stream: bool = Query(False, description="Stream PDF downloads directly to disk"),
+    _auth: None = Depends(_require_internal_key),
+):
+    task_id = get_manager().create("pipeline_auto", f"Auto Pipeline (year={year})")
+
+    def _run(tid, mgr):
+        import asyncio
+        import time
+        try:
+            stats = {
+                "stage": "starting",
+                "total_ipos_checked": 0,
+                "pending_resolve": 0,
+                "resolved_success": 0,
+                "resolved_failed": 0,
+                "pending_parse": 0,
+                "parsed_success": 0,
+                "parsed_failed": 0,
+                "current_ipo": None,
+                "current_action": "Initializing..."
+            }
+            def _update_stats(progress: float):
+                mgr.update(tid, progress, stats["current_action"], "", result=stats)
+            
+            async def _run_async():
+                _update_stats(0.01)
+
+                # 1. Scrape
+                stats["stage"] = "scraping"
+                stats["current_action"] = f"Scraping {year or 'all'} IPOs..."
+                _update_stats(0.05)
+                
+                async def on_progress(pct, label):
+                    pass # Keep the master progress bar clean
+                scrape_result = await run_scrape(year=year or 2026, sources="upstox", progress_callback=on_progress)
+                stats["scrape_result"] = scrape_result
+                _update_stats(0.2)
+
+                # 2. Audit
+                stats["stage"] = "auditing"
+                stats["current_action"] = "Auditing DB for unresolved/unparsed IPOs..."
+                _update_stats(0.25)
+                
+                ipos, _ = db_service.get_all_ipos(year=year, per_page=1000)
+                stats["total_ipos_checked"] = len(ipos)
+
+                to_resolve = []
+                to_parse = []
+                
+                for ipo in ipos:
+                    needs_resolve = False
+                    if ipo.get("rhp_url") and not ipo.get("rhp_processed"):
+                        needs_resolve = True
+                    elif ipo.get("drhp_url") and not ipo.get("drhp_processed"):
+                        needs_resolve = True
+                        
+                    if needs_resolve:
+                        to_resolve.append(ipo)
+                    else:
+                        if not ipo.get("unified_updated_at") and (ipo.get("rhp_processed") or ipo.get("drhp_processed")):
+                            to_parse.append(ipo)
+
+                stats["pending_resolve"] = len(to_resolve)
+                stats["pending_parse"] = len(to_parse)
+                _update_stats(0.3)
+
+                # 3. Resolve Loop
+                stats["stage"] = "resolving"
+                for idx, ipo in enumerate(to_resolve):
+                    stats["current_ipo"] = ipo["company_name"]
+                    stats["current_action"] = f"Resolving {ipo['company_name']} ({idx+1}/{len(to_resolve)})"
+                    _update_stats(0.3 + (0.3 * (idx / max(1, len(to_resolve)))))
+                    
+                    try:
+                        resp = await resolve_ipo_documents(ipo_id=ipo["id"], stream=stream)
+                        sub_tid = resp["task_id"]
+                        
+                        # poll
+                        while True:
+                            await asyncio.sleep(2)
+                            sub_task = mgr.get(sub_tid)
+                            if not sub_task or sub_task["status"] in ("completed", "failed"):
+                                if sub_task and sub_task["status"] == "completed":
+                                    stats["resolved_success"] += 1
+                                    to_parse.append(ipo) # Now needs parsing!
+                                else:
+                                    stats["resolved_failed"] += 1
+                                break
+                    except Exception as e:
+                        logger.error(f"Auto pipeline resolve failed for {ipo['id']}: {e}")
+                        stats["resolved_failed"] += 1
+
+                # 4. Parse Loop
+                stats["stage"] = "parsing"
+                stats["pending_parse"] = len(to_parse)
+                for idx, ipo in enumerate(to_parse):
+                    stats["current_ipo"] = ipo["company_name"]
+                    stats["current_action"] = f"Parsing {ipo['company_name']} ({idx+1}/{len(to_parse)})"
+                    _update_stats(0.6 + (0.35 * (idx / max(1, len(to_parse)))))
+                    
+                    try:
+                        resp = await parse_ipo_sections_firecrawl(ipo_id=ipo["id"], force=False)
+                        sub_tid = resp["task_id"]
+                        
+                        while True:
+                            await asyncio.sleep(2)
+                            sub_task = mgr.get(sub_tid)
+                            if not sub_task or sub_task["status"] in ("completed", "failed"):
+                                if sub_task and sub_task["status"] == "completed":
+                                    stats["parsed_success"] += 1
+                                else:
+                                    stats["parsed_failed"] += 1
+                                break
+                    except Exception as e:
+                        logger.error(f"Auto pipeline parse failed for {ipo['id']}: {e}")
+                        stats["parsed_failed"] += 1
+
+                stats["stage"] = "completed"
+                stats["current_action"] = "Pipeline complete"
+                stats["current_ipo"] = None
+                mgr.complete(tid, result=stats)
+
+            asyncio.run(_run_async())
+        except Exception as e:
+            mgr.fail(tid, str(e))
+            raise
+
+    await run_in_background(task_id, _run)
+    return {"task_id": task_id, "status": "started", "message": "Pipeline started in background. Poll GET /api/tasks/{task_id}"}
 
 
 # ─── Status Changes ────────────────────────────────────────

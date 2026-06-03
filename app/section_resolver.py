@@ -100,7 +100,7 @@ def _section_key(name: str) -> str:
     return ALIASES.get(key, key)
 
 
-async def _download_pdf(url: str, client: httpx.AsyncClient) -> Optional[bytes]:
+async def _download_pdf(url: str, client: httpx.AsyncClient, stream_to_path: Optional[str] = None) -> Optional[bytes]:
     """Download a PDF/ZIP. Retries transient network errors with backoff.
 
     Returns None on permanent failure (4xx, size cap, malformed URL) — callers
@@ -125,17 +125,27 @@ async def _download_pdf(url: str, client: httpx.AsyncClient) -> Optional[bytes]:
 
     @async_retry(attempts=3, base_delay=2.0, max_delay=15.0, retry_on=transient,
                  label=f"download_pdf({url[:60]}...)")
-    async def _do_get() -> httpx.Response:
-        return await client.get(url, headers=headers, timeout=120, follow_redirects=True)
+    async def _do_get() -> Optional[bytes]:
+        if stream_to_path:
+            async with client.stream("GET", url, headers=headers, timeout=120, follow_redirects=True) as resp:
+                if resp.status_code >= 500: return None
+                resp.raise_for_status()
+                with open(stream_to_path, 'wb') as f:
+                    async for chunk in resp.aiter_bytes(chunk_size=1024*1024):
+                        f.write(chunk)
+                return b'STREAMED'
+        else:
+            resp = await client.get(url, headers=headers, timeout=120, follow_redirects=True)
+            if resp.status_code >= 500: return None
+            resp.raise_for_status()
+            return resp.content
 
     try:
-        resp = await _do_get()
-        if resp.status_code >= 500:
-            logger.warning("PDF %s returned %d (no retry — final attempt)", url[:80], resp.status_code)
+        content = await _do_get()
+        if content is None:
+            logger.warning("PDF %s returned 5xx (no retry — final attempt)", url[:80])
             return None
-        resp.raise_for_status()
-        content = resp.content
-        if len(content) > MAX_DOWNLOAD_SIZE:
+        if not stream_to_path and len(content) > MAX_DOWNLOAD_SIZE:
             logger.warning("Document too large (%d bytes): %s", len(content), url[:80])
             return None
         return content
@@ -164,6 +174,7 @@ def _extract_pdf_from_zip(zip_bytes: bytes) -> Optional[bytes]:
 
 def _find_sections_in_doc(pdf_path: str, total_pages: int) -> list[dict]:
     import pymupdf
+    import gc
     doc = pymupdf.open(pdf_path)
     found = []
     for page_num in range(1, total_pages + 1):
@@ -187,7 +198,10 @@ def _find_sections_in_doc(pdf_path: str, total_pages: int) -> list[dict]:
                     if any(e["section_name"] == key and e["page"] == page_num for e in found): continue
                     found.append({"section_name": key, "display_name": known, "page": page_num})
                     break
+        del page
+        del text
     doc.close()
+    gc.collect()
     # Dedup: keep LAST occurrence (body, not ToC)
     seen = {}
     for entry in found:
@@ -361,27 +375,51 @@ def _extract_page_structured(page, tabulate_module) -> tuple[str, list[dict]]:
 def _extract_page_pymupdf(pdf_path: str, page_num: int) -> str:
     """Lightweight text extraction using pymupdf (fast, low RAM)."""
     import pymupdf
+    import gc
     with pymupdf.open(pdf_path) as doc:
-        return doc[page_num].get_text("text").strip()
+        text = doc[page_num].get_text("text").strip()
+    gc.collect()
+    return text
 
 
-async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, client: httpx.AsyncClient) -> dict:
+async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, client: httpx.AsyncClient, stream_download: bool = False) -> dict:
     from app.notifications import notify
     import pymupdf
-    raw = await _download_pdf(url, client)
-    if raw is None:
-        return {"status": "error", "doc_type": doc_type, "error": "download_failed"}
-    is_zip = url.lower().endswith(".zip") or raw[:4] == b'PK\x03\x04'
-    if is_zip:
-        pdf_bytes = _extract_pdf_from_zip(raw)
-        if pdf_bytes is None:
-            return {"status": "error", "doc_type": doc_type, "error": "no_pdf_in_zip"}
-    else:
-        pdf_bytes = raw
+    import gc
+    
     tmp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+    tmp_path = tmp.name; tmp.close()
+    
     try:
-        tmp_path = tmp.name; tmp.close()
-        with open(tmp_path, 'wb') as f: f.write(pdf_bytes)
+        if stream_download:
+            raw = await _download_pdf(url, client, stream_to_path=tmp_path)
+            if raw is None:
+                return {"status": "error", "doc_type": doc_type, "error": "download_failed"}
+            
+            with open(tmp_path, 'rb') as f:
+                header = f.read(4)
+            is_zip = url.lower().endswith(".zip") or header == b'PK\x03\x04'
+            
+            if is_zip:
+                with open(tmp_path, 'rb') as f:
+                    zip_bytes = f.read()
+                pdf_bytes = _extract_pdf_from_zip(zip_bytes)
+                if pdf_bytes is None:
+                    return {"status": "error", "doc_type": doc_type, "error": "no_pdf_in_zip"}
+                with open(tmp_path, 'wb') as f:
+                    f.write(pdf_bytes)
+        else:
+            raw = await _download_pdf(url, client)
+            if raw is None:
+                return {"status": "error", "doc_type": doc_type, "error": "download_failed"}
+            is_zip = url.lower().endswith(".zip") or raw[:4] == b'PK\x03\x04'
+            if is_zip:
+                pdf_bytes = _extract_pdf_from_zip(raw)
+                if pdf_bytes is None:
+                    return {"status": "error", "doc_type": doc_type, "error": "no_pdf_in_zip"}
+            else:
+                pdf_bytes = raw
+            with open(tmp_path, 'wb') as f: f.write(pdf_bytes)
         pdf_doc = pymupdf.open(tmp_path)
         total_pages = pdf_doc.page_count
         pdf_doc.close()
@@ -420,7 +458,7 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
                 else:
                     db_service.upsert_section(ipo_id, doc_type, section_name)
         finally:
-            pass  # no pdfplumber to close — using pymupdf for lightweight resolve
+            gc.collect()
 
         if len(saved_sections) == 0:
             notify(
