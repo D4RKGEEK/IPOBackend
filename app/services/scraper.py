@@ -34,6 +34,41 @@ from app.utils import normalize_company_name, format_date
 logger = logging.getLogger(__name__)
 
 
+def _record_in_year(record: IPORecord, year: int) -> bool:
+    """Return True if any date field on the record falls in the given year."""
+    y = str(year)
+
+    upstox = record.upstox_data
+    if upstox:
+        if upstox.status in ("upcoming", "open", "closed"):
+            return True
+        for val in [upstox.bidding_start_date, upstox.bidding_end_date]:
+            if val and y in str(val):
+                return True
+
+    nse = record.nse_data
+    if nse:
+        for val in [nse.issue_open_date, nse.issue_close_date,
+                    nse.drhp_date, nse.rhp_date, nse.fp_date]:
+            if val and y in str(val):
+                return True
+
+    bse = record.bse_data
+    if bse:
+        for val in [bse.start_date, bse.end_date]:
+            if val and y in str(val):
+                return True
+
+    sme = record.bse_sme_doc
+    if sme and sme.date and y in str(sme.date):
+        return True
+
+    if record.filing_date and y in str(record.filing_date):
+        return True
+
+    return False
+
+
 async def run_scrape(year: int = 2026, sources: str = "upstox",
                      progress_callback=None) -> dict:
     """Main scrape function. Fetches from sources, deduplicates, saves to DB.
@@ -91,31 +126,46 @@ async def run_scrape(year: int = 2026, sources: str = "upstox",
             if progress_callback:
                 await progress_callback(0.3, "Fetching NSE/BSE/SEBI...")
 
-            # NSE
+            # NSE — pass year-aware date range so we don't pull all-time history
             try:
                 nse = NSEClient(client)
-                nse_rows = await nse.fetch_all_docs()
+                if year:
+                    # Start from Jan of prior year to catch DRHP-stage IPOs whose
+                    # offer dates fall in the target year
+                    from_d = f"01-01-{year - 1}"
+                    to_d = f"31-12-{year}"
+                else:
+                    from_d = to_d = ""
+                nse_rows = await nse.fetch_all_docs(from_date=from_d, to_date=to_d)
                 merge_nse_into_results(results, nse_rows)
-                logger.info(f"NSE: merged {len(nse_rows)} records")
+                logger.info(f"NSE: merged {len(nse_rows)} records (year={year})")
             except Exception as exc:
                 errors.append({"source": "nse", "error": str(exc)})
 
-            # BSE
+            # BSE — no date params on the API; filter rows after fetching
             try:
                 bse = BSEClient(client)
                 bse_rows = await bse.fetch_ipos()
-                bse_rows = [r for r in bse_rows if r.issue_type in ("IPO", "FPO")]
+                bse_rows = [
+                    r for r in bse_rows
+                    if r.issue_type in ("IPO", "FPO")
+                    and (not year or any(str(year) in str(d) for d in [r.start_date, r.end_date] if d))
+                ]
                 merge_bse_into_results(results, bse_rows)
-                logger.info(f"BSE: merged {len(bse_rows)} records")
+                logger.info(f"BSE: merged {len(bse_rows)} records (year={year})")
             except Exception as exc:
                 errors.append({"source": "bse", "error": str(exc)})
 
-            # BSE SME
+            # BSE SME — filter by document date
             try:
                 sme = BSESmeClient(client)
                 drhp = await sme.fetch_drhp_list()
                 rhp = await sme.fetch_rhp_list()
+                if year:
+                    drhp = [r for r in drhp if not r.date or str(year) in str(r.date)]
+                    rhp = [r for r in rhp if not r.date or str(year) in str(r.date)]
                 merge_bse_sme_docs(results, drhp + rhp)
+                logger.info(f"BSE SME: merged {len(drhp)+len(rhp)} records (year={year})")
             except Exception as exc:
                 errors.append({"source": "bse_sme", "error": str(exc)})
 
@@ -143,7 +193,11 @@ async def run_scrape(year: int = 2026, sources: str = "upstox",
                     merged[key] = r
 
         deduped = list(merged.values())
-        logger.info(f"Raw: {len(results)}, unique: {len(deduped)}")
+        if year:
+            before = len(deduped)
+            deduped = [r for r in deduped if _record_in_year(r, year)]
+            logger.info(f"Year filter {year}: {before} → {len(deduped)} records")
+        logger.info(f"Raw: {len(results)}, unique after year filter: {len(deduped)}")
 
         if progress_callback:
             await progress_callback(0.6, f"{len(deduped)} unique — saving to DB...")
