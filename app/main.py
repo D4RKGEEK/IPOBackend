@@ -118,6 +118,50 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 db_service = DatabaseService()
 
 
+def _collect_candidate_urls(d: dict, doc_type: str) -> list:
+    """Return all known URLs for a doc type across all stored sources, deduped, best-quality first.
+
+    Priority: NSE archive (most stable) → SEBI extracted PDF → Upstox → flat computed → BSE SME.
+    Chittorgarh is not included here — caller appends it as final fallback.
+    """
+    seen: set = set()
+    urls: list = []
+
+    def _add(url):
+        if url and isinstance(url, str) and url.startswith("http") and url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    # 1. NSE — direct archive downloads from nsarchives.nseindia.com (most stable)
+    nse = d.get("nse_data") or {}
+    attach_key = "rhp_attach" if doc_type == "rhp" else ("drhp_attach" if doc_type == "drhp" else "fp_attach")
+    _add((nse.get(attach_key) or {}).get("url"))
+
+    # 2. SEBI — extracted PDF URLs from detail page
+    sebi = d.get("sebi_data") or {}
+    _add(sebi.get(f"{doc_type}_pdf"))
+
+    # 3. Flat computed URL (may be Upstox, NSE, or SEBI — whatever won compute_documents)
+    docs = d.get("documents") or {}
+    _add(docs.get(doc_type))
+    _add(d.get(f"{doc_type}_url"))
+
+    # 4. Upstox — explicit (in case flat URL is something else)
+    upstox = d.get("upstox_data") or {}
+    _add(upstox.get(f"{doc_type}_url"))
+
+    # 5. BSE SME — only when doc type matches
+    sme = d.get("bse_sme_data") or {}
+    if sme.get("document_url"):
+        sme_type = (sme.get("document_type") or "").upper()
+        if (doc_type == "rhp" and sme_type in ("RHP", "PROSPECTUS")) or \
+           (doc_type == "drhp" and sme_type == "DRHP") or \
+           (doc_type == "final_prospectus" and sme_type in ("PROSPECTUS", "FINAL PROSPECTUS", "FP")):
+            _add(sme["document_url"])
+
+    return urls
+
+
 # ─── Health ───────────────────────────────────────────────────
 @app.get("/health", tags=["System"], summary="Liveness + dependency reachability check")
 async def health(deep: bool = Query(False, description="Probe external services (R2, Firecrawl, DeepSeek)")) -> dict[str, Any]:
@@ -591,6 +635,10 @@ async def resolve_ipo_documents(ipo_id: int = Path(...), stream: bool = Query(Fa
         import asyncio
         try:
             d = ipo.to_dict()
+            # Augment with raw source blobs not in to_dict() — needed for multi-URL fallback
+            for _f in ("nse_data", "sebi_data", "bse_sme_data"):
+                if _f not in d:
+                    d[_f] = getattr(ipo, _f, None)
             docs = d.get("documents", {})
             results, errors = {}, []
             mgr.update(tid, 0.1, "Starting...")
@@ -610,43 +658,65 @@ async def resolve_ipo_documents(ipo_id: int = Path(...), stream: bool = Query(Fa
                             _chitto_slug = slug
                         return await find_document_url(_chitto_slug, prefer=prefer_suffixes)
 
-                    # Priority: RHP (max data) → DRHP (fallback). Skip FP (redundant).
+                    # Try RHP first (from ALL sources), then DRHP. RHP from any source beats DRHP.
+                    resolved_doc = None  # tracks which doc type succeeded
                     for dt, dk, prefer in [
                         ("rhp", "rhp", ["-rhp", "-prospectus", "-drhp"]),
                         ("drhp", "drhp", ["-drhp", "-prospectus"]),
                     ]:
-                        url = docs.get(dt) or d.get(f"{dt}_url")
-                        if not url:
-                            url = await _chitto_fallback(dt, prefer)
-                        if not url:
-                            results[dt] = {"status":"skipped","reason":"no URL"}; continue
-                        mgr.update(tid, 0.1+(0.5 if dt == "rhp" else 0.9), f"Resolving {dt.upper()}...")
-                        db_service.upsert_document(ipo_id, dt, url)
-                        r = await resolve_document(ipo_id, dk, url, db_service, client, stream_download=stream)
-                        if r.get("status") == "error":
-                            # RHP failed — try DRHP as fallback before giving up
-                            if dt == "rhp":
-                                fallback_url = docs.get("drhp") or d.get("drhp_url")
-                                if not fallback_url:
-                                    fallback_url = await _chitto_fallback("drhp", ["-drhp", "-prospectus"])
-                                if fallback_url and fallback_url != url:
-                                    results["drhp_attempted"] = True
-                                    db_service.upsert_document(ipo_id, "drhp", fallback_url)
-                                    dr = await resolve_document(ipo_id, "drhp", fallback_url, db_service, client, stream_download=stream)
-                                    if dr.get("status") == "error":
-                                        errors.append({"doc_type":"rhp","error":r.get("error")})
-                                        errors.append({"doc_type":"drhp","error":dr.get("error")})
-                                    results[dt] = dr  # use the fallback result
-                                else:
-                                    errors.append({"doc_type":dt,"error":r.get("error")})
-                            else:
-                                errors.append({"doc_type":dt,"error":r.get("error")})
-                        else:
-                            # RHP succeeded — skip DRHP entirely
-                            results[dt] = r
-                            if dt == "rhp":
-                                results["drhp"] = {"status":"skipped","reason":"rhp_resolved_first"}
+                        # Collect every known URL for this doc type across all stored sources
+                        candidate_urls = _collect_candidate_urls(d, dt)
+                        chitto_url = await _chitto_fallback(dt, prefer)
+                        if chitto_url and chitto_url not in candidate_urls:
+                            candidate_urls.append(chitto_url)
+
+                        if not candidate_urls:
+                            results[dt] = {"status": "skipped", "reason": "no URL from any source"}
+                            continue
+
+                        mgr.update(tid, 0.1 + (0.5 if dt == "rhp" else 0.9),
+                                   f"Resolving {dt.upper()} — {len(candidate_urls)} source(s)...")
+                        r = None
+                        for url in candidate_urls:
+                            db_service.upsert_document(ipo_id, dt, url)
+                            r = await resolve_document(ipo_id, dk, url, db_service, client, stream_download=stream)
+                            if r.get("status") == "ok":
                                 break
+                            logger.warning("resolve %s/%s failed url=%s err=%s — trying next source",
+                                           ipo_id, dt, url[:80], r.get("error", ""))
+
+                        if r and r.get("status") == "ok":
+                            results[dt] = r
+                            resolved_doc = dt
+                            if dt == "rhp":
+                                results["drhp"] = {"status": "skipped", "reason": "rhp_resolved_first"}
+                                break
+                        else:
+                            errors.append({"doc_type": dt, "tried": len(candidate_urls),
+                                           "error": r.get("error") if r else "no URL"})
+
+                    # Last resort: if BOTH RHP and DRHP failed from every source, try Final Prospectus.
+                    # NSE's fp_attach is equivalent in content to RHP — worth attempting.
+                    if resolved_doc is None:
+                        fp_candidates = _collect_candidate_urls(d, "final_prospectus")
+                        chitto_fp = await _chitto_fallback("final_prospectus", ["-prospectus", "-rhp"])
+                        if chitto_fp and chitto_fp not in fp_candidates:
+                            fp_candidates.append(chitto_fp)
+
+                        if fp_candidates:
+                            mgr.update(tid, 0.95, f"RHP+DRHP all failed — trying Final Prospectus ({len(fp_candidates)} source(s))...")
+                            r = None
+                            for url in fp_candidates:
+                                db_service.upsert_document(ipo_id, "fp", url)
+                                r = await resolve_document(ipo_id, "fp", url, db_service, client, stream_download=stream)
+                                if r.get("status") == "ok":
+                                    results["fp"] = r
+                                    resolved_doc = "fp"
+                                    break
+                                logger.warning("resolve %s/fp failed url=%s — trying next", ipo_id, url[:80])
+                            if r and r.get("status") != "ok":
+                                errors.append({"doc_type": "fp", "tried": len(fp_candidates),
+                                               "error": r.get("error") if r else "no URL"})
             asyncio.run(_resolve())
             mgr.update(tid, 1.0, "Complete")
             return {"ipo_id":ipo_id,"company_name":ipo.company_name,"status":"completed",
@@ -776,7 +846,7 @@ async def pipeline_auto(
                 
                 async def on_progress(pct, label):
                     pass # Keep the master progress bar clean
-                scrape_result = await run_scrape(year=year or 2026, sources="upstox", progress_callback=on_progress)
+                scrape_result = await run_scrape(year=year or 2026, sources="all", progress_callback=on_progress)
                 stats["scrape_result"] = scrape_result
                 _update_stats(0.2)
 
