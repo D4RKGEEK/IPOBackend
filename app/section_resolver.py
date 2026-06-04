@@ -216,17 +216,38 @@ def _extract_pdf_from_zip(zip_bytes: bytes, doc_type: Optional[str] = None) -> O
 def _find_sections_in_doc(pdf_path: str, total_pages: int) -> list[dict]:
     import pymupdf
     import gc
+    # Pages with no section found beyond this gap → stop scanning.
+    # 50 pages is conservative: financial statement sections can be 30-40 pages
+    # of pure tables with no headers, so 50 gives safe headroom.
+    # Guard: only apply once we've found at least 5 sections (avoids early exit
+    # on unusual short/sparsely-structured docs).
+    _GAP_LIMIT = 50
+    _MIN_SECTIONS_BEFORE_EXIT = 5
+
     doc = pymupdf.open(pdf_path)
     found = []
+    last_section_page = 0  # last page where any section match was found
+
     for page_num in range(1, total_pages + 1):
+        # Early exit: 50-page gap with no section AND enough already found
+        if (last_section_page and
+                page_num - last_section_page > _GAP_LIMIT and
+                len(set(e["section_name"] for e in found)) >= _MIN_SECTIONS_BEFORE_EXIT):
+            logger.debug("_find_sections: early exit at page %d (gap %d, %d unique sections)",
+                         page_num, page_num - last_section_page, len(set(e["section_name"] for e in found)))
+            break
+
         page = doc[page_num - 1]
         text = page.get_text("text")
+        found_on_page = False
+
         for known in KNOWN_SECTIONS:
             # Strategy A: standalone header on its own line
             for m in re.finditer(r'(?:^|\n)\s*' + re.escape(known) + r'\s*(?:\n|$)', text, re.IGNORECASE | re.MULTILINE):
                 key = _section_key(known)
                 if any(e["section_name"] == key and e["page"] == page_num for e in found): continue
                 found.append({"section_name": key, "display_name": known, "page": page_num})
+                found_on_page = True
                 break
             else:
                 # Strategy B: "SECTION X – NAME" pattern
@@ -238,9 +259,15 @@ def _find_sections_in_doc(pdf_path: str, total_pages: int) -> list[dict]:
                     key = _section_key(known)
                     if any(e["section_name"] == key and e["page"] == page_num for e in found): continue
                     found.append({"section_name": key, "display_name": known, "page": page_num})
+                    found_on_page = True
                     break
+
+        if found_on_page:
+            last_section_page = page_num
+
         del page
         del text
+
     doc.close()
     gc.collect()
     # Dedup: keep LAST occurrence (body, not ToC)

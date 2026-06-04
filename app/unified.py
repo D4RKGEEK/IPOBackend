@@ -155,20 +155,6 @@ def _compute_application_lot_table(unified: dict, ipo: IPOMaster) -> Optional[li
     ]
 
 
-def build_unified(ipo_id: int) -> dict[str, Any]:
-    """Build (or rebuild) ipo_master.unified_data from current parsed sections.
-
-    Returns the unified dict that was written. If no parsed data exists,
-    leaves the row unchanged and returns {}.
-
-    Side effects on ipo_master:
-        unified_data, unified_provenance, unified_version, unified_updated_at,
-        confidence_score, publish_status, validation_issues
-    """
-    unified: dict[str, Any] = {}
-    provenance: dict[str, dict] = {}
-
-
 _AMOUNT_FIELDS = {
     "total_revenue", "total_income", "profit_after_tax", "ebitda",
     "total_assets", "net_worth", "reserves_and_surplus", "total_borrowings",

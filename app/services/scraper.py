@@ -22,7 +22,7 @@ from app.clients.bse import BSEClient, BSESmeClient
 from app.clients.sebi import SEBIClient
 from app.clients.merger import (
     merge_upstox_into_results, merge_nse_into_results,
-    merge_bse_into_results, merge_bse_sme_docs,
+    merge_bse_into_results, merge_bse_sme_docs, merge_sebi_into_results,
 )
 from app.clients.chittorgarh import fetch_report, verify_rhp_url
 from app.core.identity import match_ipo, get_existing_identifiers
@@ -156,6 +156,22 @@ async def run_scrape(year: int = 2026, sources: str = "upstox",
             except Exception as exc:
                 errors.append({"source": "bse", "error": str(exc)})
 
+            # SEBI — page 1 of DRHP + RHP filings, year-filtered by filing_date
+            try:
+                sebi = SEBIClient(client)
+                sebi_drhp = await sebi.fetch_filings(page=1, document_type="DRHP")
+                sebi_rhp  = await sebi.fetch_filings(page=1, document_type="RHP")
+                sebi_records = sebi_drhp.get("records", []) + sebi_rhp.get("records", [])
+                if year:
+                    sebi_records = [
+                        r for r in sebi_records
+                        if not r.filing_date or str(year) in str(r.filing_date)
+                    ]
+                merge_sebi_into_results(results, sebi_records)
+                logger.info(f"SEBI: merged {len(sebi_records)} records (year={year})")
+            except Exception as exc:
+                errors.append({"source": "sebi", "error": str(exc)})
+
             # BSE SME — filter by document date
             try:
                 sme = BSESmeClient(client)
@@ -180,17 +196,18 @@ async def run_scrape(year: int = 2026, sources: str = "upstox",
                 merged[key] = r
             else:
                 existing = merged[key]
-                # Prefer record with more source data
-                existing_count = sum(1 for x in [
-                    existing.upstox_data, existing.bse_data,
-                    existing.nse_data, existing.bse_sme_doc,
-                ] if x is not None)
-                new_count_val = sum(1 for x in [
-                    r.upstox_data, r.bse_data,
-                    r.nse_data, r.bse_sme_doc,
-                ] if x is not None)
-                if new_count_val > existing_count:
-                    merged[key] = r
+                # Merge source fields — fill gaps only, never overwrite existing data.
+                # The merge_X_into_results functions already combine sources into one
+                # IPORecord, but if the same company name appeared in two separate
+                # batches that couldn't be matched earlier, this catches it.
+                for _attr in ("upstox_data", "nse_data", "bse_data", "bse_sme_doc", "document_urls"):
+                    if getattr(existing, _attr) is None and getattr(r, _attr) is not None:
+                        setattr(existing, _attr, getattr(r, _attr))
+                # Also fill metadata gaps
+                if existing.filing_date is None and r.filing_date:
+                    existing.filing_date = r.filing_date
+                if existing.document_type is None and r.document_type:
+                    existing.document_type = r.document_type
 
         deduped = list(merged.values())
         if year:
