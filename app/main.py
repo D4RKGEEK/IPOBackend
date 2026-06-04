@@ -677,11 +677,16 @@ async def resolve_ipo_documents(ipo_id: int = Path(...), stream: bool = Query(Fa
                         mgr.update(tid, 0.1 + (0.5 if dt == "rhp" else 0.9),
                                    f"Resolving {dt.upper()} — {len(candidate_urls)} source(s)...")
                         r = None
+                        abridged_count = 0
                         for url in candidate_urls:
                             db_service.upsert_document(ipo_id, dt, url)
                             r = await resolve_document(ipo_id, dk, url, db_service, client, stream_download=stream)
                             if r.get("status") == "ok":
                                 break
+                            if r.get("status") == "abridged_detected":
+                                abridged_count += 1
+                                logger.info("resolve %s/%s abridged doc at %s — trying next", ipo_id, dt, url[:60])
+                                continue
                             logger.warning("resolve %s/%s failed url=%s err=%s — trying next source",
                                            ipo_id, dt, url[:80], r.get("error", ""))
 
@@ -691,6 +696,12 @@ async def resolve_ipo_documents(ipo_id: int = Path(...), stream: bool = Query(Fa
                             if dt == "rhp":
                                 results["drhp"] = {"status": "skipped", "reason": "rhp_resolved_first"}
                                 break
+                        elif abridged_count == len(candidate_urls):
+                            # Every URL was an Abridged Prospectus — full doc not yet filed
+                            results[dt] = {"status": "abridged_only",
+                                           "reason": "only Abridged Prospectus available — full DRHP/RHP not yet public"}
+                            logger.info("resolve %s/%s: all %d sources returned Abridged Prospectus",
+                                        ipo_id, dt, abridged_count)
                         else:
                             errors.append({"doc_type": dt, "tried": len(candidate_urls),
                                            "error": r.get("error") if r else "no URL"})
@@ -870,12 +881,34 @@ async def pipeline_auto(
                     drhp_url = docs.get("drhp") if isinstance(docs, dict) else ipo.get("drhp_url")
                     rhp_processed = ipo.get("rhp_processed", False)
                     drhp_processed = ipo.get("drhp_processed", False)
+                    publish_status = ipo.get("publish_status", "pending")
 
-                    if rhp_url and not rhp_processed:
+                    # Re-resolve if previously rejected/abridged — but apply a 24-hour
+                    # cooldown so a persistently-failing IPO doesn't burn resources every run.
+                    # unified_updated_at is stamped on every rejection attempt (see unified.py),
+                    # so it reliably tracks when the last attempt happened.
+                    _RERESOLVE_COOLDOWN_HOURS = 24
+                    needs_reresolve = False
+                    if publish_status in ("rejected", "abridged_only"):
+                        last_attempt = ipo.get("unified_updated_at")
+                        if not last_attempt:
+                            needs_reresolve = True  # never been attempted → always try
+                        else:
+                            try:
+                                from datetime import datetime as _dt, timezone as _tz
+                                _lu = _dt.fromisoformat(last_attempt) if isinstance(last_attempt, str) else last_attempt
+                                if _lu.tzinfo is None:
+                                    _lu = _lu.replace(tzinfo=_tz.utc)
+                                _hours_ago = (_dt.now(_tz.utc) - _lu).total_seconds() / 3600
+                                needs_reresolve = _hours_ago >= _RERESOLVE_COOLDOWN_HOURS
+                            except Exception:
+                                needs_reresolve = True  # parse error → allow retry
+
+                    if rhp_url and (not rhp_processed or needs_reresolve):
                         needs_resolve = True
-                    elif drhp_url and not drhp_processed:
+                    elif drhp_url and (not drhp_processed or needs_reresolve):
                         needs_resolve = True
-                        
+
                     if needs_resolve:
                         to_resolve.append(ipo)
                     else:

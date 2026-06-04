@@ -36,11 +36,43 @@ def upsert_ipo(data: dict) -> tuple[IPOMaster, bool]:
         if existing:
             is_new = False
             ipo = existing
+            # Snapshot fields we track for change detection BEFORE applying new data
+            old_status = ipo.status
+            old_drhp = ipo.drhp_url
+            old_rhp = ipo.rhp_url
             for key, val in data.items():
                 if key.startswith("_"):
                     continue
                 if val is not None:
                     setattr(ipo, key, val)
+
+            # ── Status change tracking ───────────────────────────────────
+            new_status = ipo.status
+            if new_status and new_status != old_status:
+                s.add(IPOStatusHistory(
+                    ipo_master_id=ipo.id,
+                    old_status=old_status,
+                    new_status=new_status,
+                    change_date=utcnow(),
+                    source="scrape",
+                    triggered_by="pipeline",
+                ))
+
+            # ── Document URL change handling ─────────────────────────────
+            drhp_changed = ipo.drhp_url and ipo.drhp_url != old_drhp
+            rhp_changed  = ipo.rhp_url  and ipo.rhp_url  != old_rhp
+            # New URL → reset processed flag so audit re-resolves the updated doc
+            if drhp_changed:
+                ipo.drhp_processed = False
+            if rhp_changed:
+                ipo.rhp_processed = False
+            # Give permanently-failed IPOs another chance when a new URL arrives
+            if (drhp_changed or rhp_changed) and ipo.publish_status == "failed":
+                ipo.publish_status = "pending"
+                prov = dict(ipo.unified_provenance or {})
+                prov.pop("_retry_count", None)
+                ipo.unified_provenance = prov
+
             ipo.last_updated = utcnow()
         else:
             is_new = True

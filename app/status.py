@@ -67,6 +67,34 @@ def compute_status(record: IPORecord) -> str:
     if bse and bse.status == 'upcoming':
         return 'upcoming'
 
+    # 5.5. Date-based status from NSE issue dates.
+    # Covers NSE-only SME/Emerge IPOs not tracked by Upstox or BSE live status.
+    # Without this, an IPO that went open → closed → listed stays "drhp_filed" forever.
+    if nse and nse.issue_open_date and nse.issue_open_date not in ('-', ''):
+        _open_d = None
+        for _fmt in ('%d-%m-%Y', '%Y-%m-%d', '%d/%m/%Y'):
+            try:
+                _open_d = datetime.strptime(nse.issue_open_date[:10], _fmt).replace(tzinfo=timezone.utc)
+                break
+            except (ValueError, TypeError):
+                pass
+        if _open_d:
+            _now = datetime.now(timezone.utc)
+            _close_d = None
+            if nse.issue_close_date and nse.issue_close_date not in ('-', ''):
+                for _fmt in ('%d-%m-%Y', '%Y-%m-%d', '%d/%m/%Y'):
+                    try:
+                        _close_d = datetime.strptime(nse.issue_close_date[:10], _fmt).replace(tzinfo=timezone.utc)
+                        break
+                    except (ValueError, TypeError):
+                        pass
+            if _now < _open_d:
+                return 'upcoming'
+            elif _close_d and _now <= _close_d:
+                return 'open'
+            elif _close_d and _now > _close_d:
+                return 'closed'  # awaiting listing; if listed, NSE fp_attach (step 3) already caught it
+
     # 6. RHP filed (confirmed IPO coming)
     if nse and nse.rhp_attach and nse.rhp_attach.url:
         return 'rhp_filed'

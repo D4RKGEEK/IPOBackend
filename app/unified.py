@@ -402,14 +402,45 @@ def build_unified(ipo_id: int) -> dict[str, Any]:
         previous = ipo.unified_data or {}
         changed = previous != sectioned
 
+        # Read pipeline metadata from existing provenance BEFORE overwriting with fresh field provenance
+        _prev_retry_count = (ipo.unified_provenance or {}).get("_retry_count", 0)
+
         ipo.unified_data = sectioned
         ipo.unified_provenance = provenance
         if changed:
             ipo.unified_version = (ipo.unified_version or 0) + 1
             ipo.unified_updated_at = datetime.now(timezone.utc)
+        elif result.publish_status == "rejected":
+            # Data unchanged but still rejected — stamp attempt time for cooldown tracking.
+            ipo.unified_updated_at = datetime.now(timezone.utc)
+
+        # Track consecutive rejections. After MAX_AUTO_RETRIES the IPO is escalated
+        # to "failed" so the pipeline stops retrying it automatically.
+        # Counter resets in upsert_ipo when the document URL changes (new doc available).
+        _MAX_AUTO_RETRIES = 3
+        if result.publish_status == "rejected":
+            prov = dict(ipo.unified_provenance or {})
+            _retry_count = _prev_retry_count + 1
+            prov["_retry_count"] = _retry_count
+            ipo.unified_provenance = prov
+            if _retry_count >= _MAX_AUTO_RETRIES:
+                ipo.publish_status = "failed"
+                logger.info(
+                    "[unified] ipo=%d escalated to 'failed' after %d consecutive rejections",
+                    ipo_id, _retry_count,
+                )
+            else:
+                ipo.publish_status = result.publish_status
+        else:
+            # On success, clear the retry counter
+            if result.publish_status in ("published", "needs_review"):
+                prov = dict(ipo.unified_provenance or {})
+                prov.pop("_retry_count", None)
+                ipo.unified_provenance = prov
+            ipo.publish_status = result.publish_status
+
         ipo.confidence_score = result.confidence_score
         ipo.validation_issues = result.issues or None
-        ipo.publish_status = result.publish_status
         s.commit()
 
     logger.info(

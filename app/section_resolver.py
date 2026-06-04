@@ -170,18 +170,46 @@ async def _download_pdf(url: str, client: httpx.AsyncClient, stream_to_path: Opt
         return None
 
 
-def _extract_pdf_from_zip(zip_bytes: bytes) -> Optional[bytes]:
+def _extract_pdf_from_zip(zip_bytes: bytes, doc_type: Optional[str] = None) -> Optional[bytes]:
+    """Extract the best-matching PDF from a ZIP.
+
+    Selection priority (lower = better):
+      1. Not abridged  AND  filename matches doc_type  → (0, 0, -size)
+      2. Not abridged  AND  no type match              → (0, 1, -size)  ← wins on size
+      3. Abridged (any)                                → (1, *, -size)  ← always last
+
+    ZIPs from NSE Emerge often bundle both a Draft Abridged Prospectus and the
+    full DRHP. The old sort put "Draft*" first because 'draft' matched; now
+    "Abridged" in the name is an explicit last-resort signal.
+    """
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-            pdf_files = [n for n in zf.namelist() if n.lower().endswith('.pdf')]
-            if not pdf_files: return None
-            pdf_files.sort(key=lambda n: (
-                0 if 'drhp' in n.lower() or 'draft' in n.lower() else
-                1 if 'rhp' in n.lower() or 'prospectus' in n.lower() else 2
-            ))
-            return zf.read(pdf_files[0])
+            pdfs = [
+                (i.filename, i.file_size)
+                for i in zf.infolist()
+                if i.filename.lower().endswith('.pdf') and i.file_size > 0
+            ]
+            if not pdfs:
+                return None
+
+            def _rank(filename: str, size: int) -> tuple:
+                n = filename.lower()
+                is_abridged = 'abridged' in n
+                type_match = (not is_abridged) and (
+                    (doc_type == 'drhp' and 'drhp' in n) or
+                    (doc_type == 'rhp'  and 'rhp'  in n and 'drhp' not in n) or
+                    (doc_type == 'fp'   and ('fp' in n or ('prospectus' in n and 'draft' not in n))) or
+                    (doc_type is None)
+                )
+                return (1 if is_abridged else 0, 0 if type_match else 1, -size)
+
+            pdfs.sort(key=lambda x: _rank(x[0], x[1]))
+            chosen = pdfs[0][0]
+            if len(pdfs) > 1:
+                logger.debug("ZIP: chose %r from %s", chosen, [p[0] for p in pdfs])
+            return zf.read(chosen)
     except Exception as e:
-        logger.warning(f"ZIP extraction failed: {e}")
+        logger.warning("ZIP extraction failed: %s", e)
         return None
 
 
@@ -455,7 +483,7 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
             if is_zip:
                 with open(tmp_path, 'rb') as f:
                     zip_bytes = f.read()
-                pdf_bytes = _extract_pdf_from_zip(zip_bytes)
+                pdf_bytes = _extract_pdf_from_zip(zip_bytes, doc_type=doc_type)
                 del zip_bytes
                 if pdf_bytes is None:
                     return {"status": "error", "doc_type": doc_type, "error": "no_pdf_in_zip"}
@@ -468,7 +496,7 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
                 return {"status": "error", "doc_type": doc_type, "error": "download_failed"}
             is_zip = url.lower().endswith(".zip") or raw[:4] == b'PK\x03\x04'
             if is_zip:
-                pdf_bytes = _extract_pdf_from_zip(raw)
+                pdf_bytes = _extract_pdf_from_zip(raw, doc_type=doc_type)
                 del raw
                 if pdf_bytes is None:
                     return {"status": "error", "doc_type": doc_type, "error": "no_pdf_in_zip"}
@@ -482,6 +510,19 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
         import pymupdf as _pm
         with _pm.open(tmp_path) as _pd:
             total_pages = _pd.page_count
+            # Detect Draft Abridged Prospectuses (DAP) — NSE sometimes mislabels them as DRHP.
+            # A DAP is < 20 pages and says "ABRIDGED" on the first page. They don't have the
+            # standard section structure, so processing them produces confidence = 0.0.
+            if total_pages < 20 and _pd.page_count > 0:
+                p0 = _pd[0].get_text("text").upper()
+                if "ABRIDGED" in p0 or "DRAFT ABRIDGED" in p0:
+                    logger.warning(
+                        "resolve %s/%s: Abridged Prospectus detected (%d pages) — full doc not yet available. url=%s",
+                        ipo_id, doc_type, total_pages, url[:80],
+                    )
+                    return {"status": "abridged_detected", "doc_type": doc_type,
+                            "total_pages": total_pages,
+                            "message": "Abridged Prospectus — full DRHP/RHP not yet filed publicly"}
         loop = asyncio.get_running_loop()
         page_entries = await loop.run_in_executor(_get_pdf_executor(), _find_sections_in_doc, tmp_path, total_pages)
         sections = _page_range_entries(page_entries, total_pages)
