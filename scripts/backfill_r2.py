@@ -11,6 +11,7 @@ Run:
 
 Idempotent — re-running just overwrites objects with the same content.
 """
+
 from __future__ import annotations
 
 import argparse
