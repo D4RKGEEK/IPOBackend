@@ -229,6 +229,7 @@ def upsert_section(ipo_id: int, doc_type: str, section_name: str,
                    page_start: Optional[int] = None, page_end: Optional[int] = None,
                    raw_md: Optional[str] = None) -> None:
     """Create or update a document section."""
+    import hashlib
     from .models import DocumentSection
     with get_session() as s:
         existing = s.query(DocumentSection).filter(
@@ -244,13 +245,21 @@ def upsert_section(ipo_id: int, doc_type: str, section_name: str,
             if raw_md is not None:
                 existing.raw_md = raw_md
                 existing.char_count = len(raw_md)
+                existing.raw_md_sha256 = hashlib.sha256(
+                    raw_md.encode("utf-8", errors="replace")
+                ).hexdigest()
             existing.last_updated = utcnow()
         else:
+            raw_hash = (
+                hashlib.sha256(raw_md.encode("utf-8", errors="replace")).hexdigest()
+                if raw_md else None
+            )
             existing = DocumentSection(
                 ipo_master_id=ipo_id, doc_type=doc_type,
                 section_name=section_name, page_start=page_start,
                 page_end=page_end, raw_md=raw_md,
                 char_count=len(raw_md) if raw_md else 0,
+                raw_md_sha256=raw_hash,
             )
             s.add(existing)
         s.commit()
@@ -308,6 +317,10 @@ def mark_section_parsed(section_id: int, parsed_data: dict) -> None:
         row.parsed_data = parsed_data
         row.parsed = 1
         row.parsed_at = utcnow()
+        # Stamp parsed_md_sha256 = raw_md_sha256 so the hash-gate skips this
+        # section on the next pipeline run when content hasn't changed.
+        if row.raw_md_sha256:
+            row.parsed_md_sha256 = row.raw_md_sha256
         s.commit()
 
 
@@ -366,6 +379,9 @@ class DatabaseService:
             "source": r.source, "triggered_by": r.triggered_by,
             "details": r.details,
         } for r in rows]
+
+    def update_ipo_field(self, ipo_id: int, field: str, value) -> bool:
+        return update_ipo_field(ipo_id, field, value)
 
     def get_sections(self, ipo_id: int, doc_type: str) -> list[dict]:
         return get_sections(ipo_id, doc_type)

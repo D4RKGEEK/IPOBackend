@@ -567,6 +567,15 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
         finally:
             gc.collect()
 
+        # Mark document as resolved so the pipeline audit skips re-downloading next run.
+        # drhp_processed / rhp_processed are Integer(0/1) columns — use 1, not True.
+        if saved_sections:
+            _flag = "rhp_processed" if doc_type == "rhp" else "drhp_processed"
+            try:
+                db_service.update_ipo_field(ipo_id, _flag, 1)
+            except Exception as _e:
+                logger.warning("resolve: could not set %s for ipo=%s: %s", _flag, ipo_id, _e)
+
         if len(saved_sections) == 0:
             notify(
                 f"⚠️ Resolve found 0 sections · ipo={ipo_id} · {doc_type.upper()}",

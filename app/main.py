@@ -666,9 +666,12 @@ async def resolve_ipo_documents(ipo_id: int = Path(...), stream: bool = Query(Fa
                     ]:
                         # Collect every known URL for this doc type across all stored sources
                         candidate_urls = _collect_candidate_urls(d, dt)
-                        chitto_url = await _chitto_fallback(dt, prefer)
-                        if chitto_url and chitto_url not in candidate_urls:
-                            candidate_urls.append(chitto_url)
+                        # Only call Chittorgarh when we have no URLs or just one (as extra fallback).
+                        # Avoids a network HEAD request on every resolve for well-covered IPOs.
+                        if len(candidate_urls) < 2:
+                            chitto_url = await _chitto_fallback(dt, prefer)
+                            if chitto_url and chitto_url not in candidate_urls:
+                                candidate_urls.append(chitto_url)
 
                         if not candidate_urls:
                             results[dt] = {"status": "skipped", "reason": "no URL from any source"}
@@ -697,9 +700,14 @@ async def resolve_ipo_documents(ipo_id: int = Path(...), stream: bool = Query(Fa
                                 results["drhp"] = {"status": "skipped", "reason": "rhp_resolved_first"}
                                 break
                         elif abridged_count == len(candidate_urls):
-                            # Every URL was an Abridged Prospectus — full doc not yet filed
+                            # Every URL was an Abridged Prospectus — full doc not yet filed.
+                            # Persist to DB so the audit cooldown (24h) kicks in and we don't
+                            # re-download the ZIP every 15-min pipeline run.
                             results[dt] = {"status": "abridged_only",
                                            "reason": "only Abridged Prospectus available — full DRHP/RHP not yet public"}
+                            from datetime import datetime as _dt, timezone as _tz
+                            db_service.update_ipo_field(ipo_id, "publish_status", "abridged_only")
+                            db_service.update_ipo_field(ipo_id, "unified_updated_at", _dt.now(_tz.utc))
                             logger.info("resolve %s/%s: all %d sources returned Abridged Prospectus",
                                         ipo_id, dt, abridged_count)
                         else:
