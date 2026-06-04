@@ -843,6 +843,8 @@ async def pipeline_auto(
             stats = {
                 "stage": "starting",
                 "total_ipos_checked": 0,
+                "skipped_count": 0,       # already fully processed
+                "no_url_count": 0,        # no document URL at all
                 "pending_resolve": 0,
                 "resolved_success": 0,
                 "resolved_failed": 0,
@@ -850,11 +852,21 @@ async def pipeline_auto(
                 "parsed_success": 0,
                 "parsed_failed": 0,
                 "current_ipo": None,
-                "current_action": "Initializing..."
+                "current_action": "Initializing...",
+                "log": [],                # running human-readable log
+                "resolve_details": [],    # [{name, status, doc_type, sections_found, error}]
+                "parse_details": [],      # [{name, status, groups_parsed, groups_skipped, error}]
             }
+
+            def _log(msg: str):
+                from datetime import datetime as _dt, timezone as _tz
+                entry = f"[{_dt.now(_tz.utc).strftime('%H:%M:%S')}] {msg}"
+                stats["log"].append(entry)
+                logger.info("pipeline: %s", msg)
+
             def _update_stats(progress: float):
                 mgr.update(tid, progress, stats["current_action"], "", result=stats)
-            
+
             async def _run_async():
                 _update_stats(0.01)
 
@@ -862,18 +874,21 @@ async def pipeline_auto(
                 stats["stage"] = "scraping"
                 stats["current_action"] = f"Scraping {year or 'all'} IPOs..."
                 _update_stats(0.05)
-                
+
                 async def on_progress(pct, label):
                     pass # Keep the master progress bar clean
                 scrape_result = await run_scrape(year=year or 2026, sources="all", progress_callback=on_progress)
                 stats["scrape_result"] = scrape_result
+                new_found = scrape_result.get("new_ipos_found", 0)
+                total_unique = scrape_result.get("total_unique", 0)
+                _log(f"Scrape complete — {total_unique} total IPOs, {new_found} new this run")
                 _update_stats(0.2)
 
                 # 2. Audit
                 stats["stage"] = "auditing"
                 stats["current_action"] = "Auditing DB for unresolved/unparsed IPOs..."
                 _update_stats(0.25)
-                
+
                 ipos, _ = db_service.get_all_ipos(year=year, per_page=1000)
                 # Convert ORM objects to plain dicts so we can use .get() safely
                 ipos = [ipo.to_dict() if hasattr(ipo, 'to_dict') else ipo for ipo in ipos]
@@ -881,103 +896,182 @@ async def pipeline_auto(
 
                 to_resolve = []
                 to_parse = []
-                
+                skipped = []   # fully done — nothing to do
+                no_url = []    # no document URL at all
+
+                _RERESOLVE_COOLDOWN_HOURS = 24
+
                 for ipo in ipos:
-                    needs_resolve = False
+                    name = ipo.get("company_name", f"id={ipo.get('id')}")
                     docs = ipo.get("documents", {})
                     rhp_url = docs.get("rhp") if isinstance(docs, dict) else ipo.get("rhp_url")
+                    fp_url = docs.get("final_prospectus") if isinstance(docs, dict) else ipo.get("final_prospectus_url")
                     drhp_url = docs.get("drhp") if isinstance(docs, dict) else ipo.get("drhp_url")
+                    # rhp_processed covers both RHP and FP (they share the flag in db_service)
                     rhp_processed = ipo.get("rhp_processed", False)
                     drhp_processed = ipo.get("drhp_processed", False)
                     publish_status = ipo.get("publish_status", "pending")
+                    unified_at = ipo.get("unified_updated_at")
 
-                    # Re-resolve if previously rejected/abridged — but apply a 24-hour
-                    # cooldown so a persistently-failing IPO doesn't burn resources every run.
-                    # unified_updated_at is stamped on every rejection attempt (see unified.py),
-                    # so it reliably tracks when the last attempt happened.
-                    _RERESOLVE_COOLDOWN_HOURS = 24
+                    # Gate 1: Fully done — skip until a new URL or status change arrives
+                    if publish_status in ("published", "needs_review") and unified_at:
+                        skipped.append(f"{name} [{publish_status}]")
+                        continue
+
+                    # Gate 2: No document URLs at all — nothing we can do
+                    primary_url = rhp_url or fp_url  # RHP/FP share rhp_processed flag
+                    if not primary_url and not drhp_url:
+                        no_url.append(name)
+                        continue
+
+                    # Gate 3: 24-hour cooldown for persistently-failing IPOs
                     needs_reresolve = False
+                    reresolve_reason = ""
                     if publish_status in ("rejected", "abridged_only"):
-                        last_attempt = ipo.get("unified_updated_at")
-                        if not last_attempt:
-                            needs_reresolve = True  # never been attempted → always try
+                        if not unified_at:
+                            needs_reresolve = True
+                            reresolve_reason = f"status={publish_status}, never attempted"
                         else:
                             try:
                                 from datetime import datetime as _dt, timezone as _tz
-                                _lu = _dt.fromisoformat(last_attempt) if isinstance(last_attempt, str) else last_attempt
+                                _lu = _dt.fromisoformat(unified_at) if isinstance(unified_at, str) else unified_at
                                 if _lu.tzinfo is None:
                                     _lu = _lu.replace(tzinfo=_tz.utc)
                                 _hours_ago = (_dt.now(_tz.utc) - _lu).total_seconds() / 3600
                                 needs_reresolve = _hours_ago >= _RERESOLVE_COOLDOWN_HOURS
+                                if needs_reresolve:
+                                    reresolve_reason = f"status={publish_status}, last attempt {_hours_ago:.0f}h ago"
                             except Exception:
-                                needs_reresolve = True  # parse error → allow retry
+                                needs_reresolve = True
+                                reresolve_reason = f"status={publish_status}, timestamp parse error"
 
-                    if rhp_url and (not rhp_processed or needs_reresolve):
-                        needs_resolve = True
-                    elif drhp_url and (not drhp_processed or needs_reresolve):
-                        needs_resolve = True
+                    # Gate 4: RHP/FP takes priority over DRHP.
+                    # If RHP/FP URL exists, we only care about rhp_processed — never re-queue DRHP.
+                    # If no RHP/FP, fall back to DRHP.
+                    needs_resolve = False
+                    resolve_reason = ""
+                    if primary_url:
+                        if not rhp_processed or needs_reresolve:
+                            needs_resolve = True
+                            resolve_reason = reresolve_reason if needs_reresolve else "rhp/fp not yet resolved"
+                        # else: primary doc done → DRHP flag doesn't matter, move on
+                    elif drhp_url:
+                        if not drhp_processed or needs_reresolve:
+                            needs_resolve = True
+                            resolve_reason = reresolve_reason if needs_reresolve else "drhp not yet resolved"
 
                     if needs_resolve:
-                        to_resolve.append(ipo)
-                    else:
-                        if not ipo.get("unified_updated_at") and (rhp_processed or drhp_processed):
+                        to_resolve.append({**ipo, "_resolve_reason": resolve_reason})
+                    elif rhp_processed or drhp_processed:
+                        if not unified_at:
                             to_parse.append(ipo)
+                        else:
+                            # Resolved + unified but not published/needs_review — edge state
+                            skipped.append(f"{name} [resolved+unified, status={publish_status}]")
+                    # else: no URL resolved yet and status not rejected/abridged → genuinely new/pending
 
+                stats["skipped_count"] = len(skipped)
+                stats["no_url_count"] = len(no_url)
                 stats["pending_resolve"] = len(to_resolve)
                 stats["pending_parse"] = len(to_parse)
+
+                _log(f"Audit — {len(ipos)} checked: "
+                     f"{len(to_resolve)} to resolve, {len(to_parse)} to parse, "
+                     f"{len(skipped)} skipped (done), {len(no_url)} no URL")
+                if no_url:
+                    _log(f"  No URL: {', '.join(no_url[:10])}" + (" …" if len(no_url) > 10 else ""))
+                if skipped:
+                    _log(f"  Skipped (fully done): {', '.join(skipped[:10])}" + (" …" if len(skipped) > 10 else ""))
+                for ipo in to_resolve:
+                    _log(f"  → Resolve queued: {ipo.get('company_name')} ({ipo.get('_resolve_reason', '')})")
+                for ipo in to_parse:
+                    _log(f"  → Parse queued:   {ipo.get('company_name')}")
+
                 _update_stats(0.3)
 
                 # 3. Resolve Loop
                 stats["stage"] = "resolving"
                 for idx, ipo in enumerate(to_resolve):
-                    stats["current_ipo"] = ipo.get("company_name", str(ipo.get("id")))
-                    stats["current_action"] = f"Resolving {ipo.get('company_name')} ({idx+1}/{len(to_resolve)})"
+                    name = ipo.get("company_name", str(ipo.get("id")))
+                    stats["current_ipo"] = name
+                    stats["current_action"] = f"Resolving {name} ({idx+1}/{len(to_resolve)})"
                     _update_stats(0.3 + (0.3 * (idx / max(1, len(to_resolve)))))
-                    
+
                     try:
                         resp = await resolve_ipo_documents(ipo_id=ipo["id"], stream=stream)
                         sub_tid = resp["task_id"]
-                        
+
                         # poll
                         while True:
                             await asyncio.sleep(2)
                             sub_task = mgr.get(sub_tid)
                             if not sub_task or sub_task["status"] in ("completed", "failed"):
                                 if sub_task and sub_task["status"] == "completed":
+                                    sub_result = sub_task.get("result") or {}
+                                    sections = sub_result.get("sections_found", "?")
+                                    doc_type = sub_result.get("doc_type", "?")
                                     stats["resolved_success"] += 1
-                                    to_parse.append(ipo) # Now needs parsing!
+                                    stats["resolve_details"].append({
+                                        "name": name, "status": "ok",
+                                        "doc_type": doc_type, "sections_found": sections,
+                                    })
+                                    _log(f"  Resolve OK: {name} — {doc_type.upper()}, {sections} sections")
+                                    to_parse.append(ipo)
                                 else:
+                                    err = (sub_task or {}).get("error", "unknown error")
                                     stats["resolved_failed"] += 1
+                                    stats["resolve_details"].append({
+                                        "name": name, "status": "failed", "error": err,
+                                    })
+                                    _log(f"  Resolve FAILED: {name} — {err}")
                                 break
                     except Exception as e:
                         logger.error(f"Auto pipeline resolve failed for {ipo.get('id')}: {e}")
                         stats["resolved_failed"] += 1
+                        stats["resolve_details"].append({"name": name, "status": "error", "error": str(e)})
+                        _log(f"  Resolve ERROR: {name} — {e}")
 
                 # 4. Parse Loop
                 stats["stage"] = "parsing"
                 stats["pending_parse"] = len(to_parse)
                 for idx, ipo in enumerate(to_parse):
-                    stats["current_ipo"] = ipo.get("company_name", str(ipo.get("id")))
-                    stats["current_action"] = f"Parsing {ipo.get('company_name')} ({idx+1}/{len(to_parse)})"
+                    name = ipo.get("company_name", str(ipo.get("id")))
+                    stats["current_ipo"] = name
+                    stats["current_action"] = f"Parsing {name} ({idx+1}/{len(to_parse)})"
                     _update_stats(0.6 + (0.35 * (idx / max(1, len(to_parse)))))
-                    
+
                     try:
                         resp = await parse_ipo_sections_firecrawl(ipo_id=ipo["id"], force=False)
                         sub_tid = resp["task_id"]
-                        
+
                         while True:
                             await asyncio.sleep(2)
                             sub_task = mgr.get(sub_tid)
                             if not sub_task or sub_task["status"] in ("completed", "failed"):
                                 if sub_task and sub_task["status"] == "completed":
+                                    sub_result = sub_task.get("result") or {}
+                                    gp = sub_result.get("groups_parsed", "?")
+                                    gs = sub_result.get("groups_skipped", "?")
                                     stats["parsed_success"] += 1
+                                    stats["parse_details"].append({
+                                        "name": name, "status": "ok",
+                                        "groups_parsed": gp, "groups_skipped": gs,
+                                    })
+                                    _log(f"  Parse OK: {name} — {gp} groups parsed, {gs} cached/skipped")
                                 else:
+                                    err = (sub_task or {}).get("error", "unknown error")
                                     stats["parsed_failed"] += 1
+                                    stats["parse_details"].append({"name": name, "status": "failed", "error": err})
+                                    _log(f"  Parse FAILED: {name} — {err}")
                                 break
                     except Exception as e:
                         logger.error(f"Auto pipeline parse failed for {ipo.get('id')}: {e}")
                         stats["parsed_failed"] += 1
+                        stats["parse_details"].append({"name": name, "status": "error", "error": str(e)})
+                        _log(f"  Parse ERROR: {name} — {e}")
 
+                _log(f"Pipeline complete — resolved {stats['resolved_success']}/{stats['pending_resolve']}, "
+                     f"parsed {stats['parsed_success']}/{stats['pending_parse']}")
                 stats["stage"] = "completed"
                 stats["current_action"] = "Pipeline complete"
                 stats["current_ipo"] = None
