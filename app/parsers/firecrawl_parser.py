@@ -70,7 +70,7 @@ def _section_rows_for_ipo(ipo_id: int) -> dict[str, dict]:
     for any section in TARGET_SECTIONS that exists in DB with non-empty raw_md.
     """
     db = DatabaseService()
-    pref = {"drhp": 0, "rhp": 1, "fp": 2}
+    pref = {"fp": 0, "rhp": 1, "drhp": 2}
     best: dict[str, dict] = {}
     for dt in ("drhp", "rhp", "fp"):
         for row in db.get_sections(ipo_id, dt):

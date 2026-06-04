@@ -161,6 +161,7 @@ async def run_waterfall(ipo_id: int) -> dict[str, Any]:
         # Pick best values and build provenance
         updates = {}
         provenance = {}
+        doc_changed = False  # ← Naya: track if any document URL changed
 
         field_mapping = {
             "status": "status", "open_date": "open_date",
@@ -172,8 +173,21 @@ async def run_waterfall(ipo_id: int) -> dict[str, Any]:
             if field in sources:
                 val, source_name = pick_best(field, sources[field])
                 if val is not None:
+                    old_val = getattr(ipo, db_field, None)
                     updates[db_field] = val
                     provenance[db_field] = source_name
+                    # Detect document URL change
+                    if db_field in ("rhp_url", "drhp_url") and val != old_val:
+                        doc_changed = True
+
+        # ─── Naya: URL change → reset processing flags ──────────
+        if doc_changed:
+            updates["publish_status"] = "pending"
+            updates["confidence_score"] = 0.0
+            if "rhp_url" in updates and updates["rhp_url"]:
+                updates["rhp_processed"] = 0
+            if "drhp_url" in updates and updates["drhp_url"]:
+                updates["drhp_processed"] = 0
 
         # Status from Upstox takes priority
         if u.get("status"):

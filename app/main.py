@@ -836,10 +836,56 @@ async def pipeline_auto(
 ):
     task_id = get_manager().create("pipeline_auto", f"Auto Pipeline (year={year})")
 
+    # ─── Resource-aware concurrency ─────────────
+    def _get_resource_budget() -> dict:
+        """Check free RAM + CPU load. Returns concurrency hints."""
+        try:
+            with open('/proc/meminfo') as f:
+                mem = {}
+                for line in f:
+                    parts = line.split()
+                    if parts[0].rstrip(':') in ('MemTotal', 'MemAvailable', 'MemFree'):
+                        mem[parts[0].rstrip(':')] = int(parts[1])
+            free_mb = mem.get('MemAvailable', 0) / 1024
+            total_mb = mem.get('MemTotal', 0) / 1024
+        except Exception:
+            free_mb = total_mb = 0
+
+        try:
+            load_1m, load_5m, _ = os.getloadavg()
+        except Exception:
+            load_1m = load_5m = 0
+
+        # RESOLVE: PDF processing takes 200-500MB per IPO (pymupdf + pdfplumber).
+        # Leave 400MB safety margin for PM2 services (hermes, frontend, etc).
+        resolve_margin = 400
+        resolve_slots = max(1, int((free_mb - resolve_margin) / 350)) if free_mb > resolve_margin else 1
+        resolve_slots = min(resolve_slots, 2)  # 2 vCPU, never exceed 2
+
+        # PARSE: Firecrawl is network-only (~0MB local). CPU is the bottleneck.
+        # 2 vCPU → 2 parallel parse calls is safe.
+        if load_1m < 1.5:
+            parse_slots = min(3, max(1, int(free_mb / 400)))
+        elif load_1m < 2.5:
+            parse_slots = 2
+        else:
+            parse_slots = 1
+
+        return {
+            "free_mb": round(free_mb, 1), "total_mb": round(total_mb, 1),
+            "load_1m": round(load_1m, 2), "load_5m": round(load_5m, 2),
+            "resolve_concurrency": resolve_slots,
+            "parse_concurrency": parse_slots,
+            "resolve_timeout": 600,   # 10 min per IPO resolve
+            "parse_timeout": 600,     # 10 min per Firecrawl parse
+        }
+
     def _run(tid, mgr):
         import asyncio
+        import os
         import time
         try:
+            budget = _get_resource_budget()
             stats = {
                 "stage": "starting",
                 "total_ipos_checked": 0,
@@ -856,6 +902,7 @@ async def pipeline_auto(
                 "log": [],                # running human-readable log
                 "resolve_details": [],    # [{name, status, doc_type, sections_found, error}]
                 "parse_details": [],      # [{name, status, groups_parsed, groups_skipped, error}]
+                "resources": budget,
             }
 
             def _log(msg: str):
@@ -914,9 +961,32 @@ async def pipeline_auto(
                     unified_at = ipo.get("unified_updated_at")
 
                     # Gate 1: Fully done — skip until a new URL or status change arrives
+                    # BUT: if this IPO got a NEW RHP/FP/DRHP URL since last publish → re-process
+                    # Also: if RHP/FP URL exists but was never processed, re-process too
                     if publish_status in ("published", "needs_review") and unified_at:
-                        skipped.append(f"{name} [{publish_status}]")
-                        continue
+                        # Check if any document URL appeared that we didn't have before (new since publish)
+                        new_doc_url = False
+                        if fp_url and not ipo.get("final_prospectus_url"):
+                            new_doc_url = True
+                        elif rhp_url and not ipo.get("rhp_url"):
+                            new_doc_url = True
+                        elif drhp_url and not ipo.get("drhp_url"):
+                            new_doc_url = True
+
+                        # Check if we have a primary doc (RHP/FP > DRHP) that's unprocessed
+                        # This catches cases where URL existed at publish time but was never resolved
+                        unproc_doc = False
+                        primary_url = rhp_url or fp_url
+                        if primary_url and not rhp_processed:
+                            unproc_doc = True
+                            resolve_reason = "rhp/fp not yet resolved (existing URL)"
+                        elif not primary_url and drhp_url and not drhp_processed:
+                            unproc_doc = True
+                            resolve_reason = "drhp not yet resolved (existing URL)"
+
+                        if not new_doc_url and not unproc_doc:
+                            skipped.append(f"{name} [{publish_status}]")
+                            continue
 
                     # Gate 2: No document URLs at all — nothing we can do
                     primary_url = rhp_url or fp_url  # RHP/FP share rhp_processed flag
@@ -989,8 +1059,11 @@ async def pipeline_auto(
 
                 _update_stats(0.3)
 
-                # 3. Resolve Loop
+                # 3. Resolve Loop (SEQ — PDF memory is too heavy for parallel)
                 stats["stage"] = "resolving"
+                b = budget
+                _log(f"Resources: {b['free_mb']}MB free / {b['total_mb']}MB total, "
+                     f"load={b['load_1m']}/1m, resolve_seq, parse={b['parse_concurrency']}x")
                 for idx, ipo in enumerate(to_resolve):
                     name = ipo.get("company_name", str(ipo.get("id")))
                     stats["current_ipo"] = name
@@ -1031,44 +1104,52 @@ async def pipeline_auto(
                         stats["resolve_details"].append({"name": name, "status": "error", "error": str(e)})
                         _log(f"  Resolve ERROR: {name} — {e}")
 
-                # 4. Parse Loop
+                # 4. Parse Loop (PARALLEL — Firecrawl is network-only)
                 stats["stage"] = "parsing"
                 stats["pending_parse"] = len(to_parse)
-                for idx, ipo in enumerate(to_parse):
+                b = _get_resource_budget()  # re-check before parse phase
+                parse_sem = asyncio.Semaphore(b["parse_concurrency"])
+
+                async def _parse_and_poll(ipo: dict) -> dict:
+                    """Parse one IPO with concurrency limit. Returns log entry."""
                     name = ipo.get("company_name", str(ipo.get("id")))
-                    stats["current_ipo"] = name
-                    stats["current_action"] = f"Parsing {name} ({idx+1}/{len(to_parse)})"
-                    _update_stats(0.6 + (0.35 * (idx / max(1, len(to_parse)))))
+                    async with parse_sem:
+                        try:
+                            resp = await parse_ipo_sections_firecrawl(ipo_id=ipo["id"], force=False)
+                            sub_tid = resp["task_id"]
+                            poll_start = time.monotonic()
+                            while True:
+                                if time.monotonic() - poll_start > b["parse_timeout"]:
+                                    return {"name": name, "status": "timeout"}
+                                await asyncio.sleep(2)
+                                sub_task = mgr.get(sub_tid)
+                                if not sub_task or sub_task["status"] in ("completed", "failed"):
+                                    if sub_task and sub_task["status"] == "completed":
+                                        sr = sub_task.get("result") or {}
+                                        return {"name": name, "status": "ok",
+                                                "groups_parsed": sr.get("groups_parsed", "?"),
+                                                "groups_skipped": sr.get("groups_skipped", "?")}
+                                    err = (sub_task or {}).get("error", "unknown")
+                                    return {"name": name, "status": "failed", "error": err}
+                        except Exception as e:
+                            return {"name": name, "status": "error", "error": str(e)}
 
-                    try:
-                        resp = await parse_ipo_sections_firecrawl(ipo_id=ipo["id"], force=False)
-                        sub_tid = resp["task_id"]
+                    return {"name": name, "status": "error", "error": "unreachable"}
 
-                        while True:
-                            await asyncio.sleep(2)
-                            sub_task = mgr.get(sub_tid)
-                            if not sub_task or sub_task["status"] in ("completed", "failed"):
-                                if sub_task and sub_task["status"] == "completed":
-                                    sub_result = sub_task.get("result") or {}
-                                    gp = sub_result.get("groups_parsed", "?")
-                                    gs = sub_result.get("groups_skipped", "?")
-                                    stats["parsed_success"] += 1
-                                    stats["parse_details"].append({
-                                        "name": name, "status": "ok",
-                                        "groups_parsed": gp, "groups_skipped": gs,
-                                    })
-                                    _log(f"  Parse OK: {name} — {gp} groups parsed, {gs} cached/skipped")
-                                else:
-                                    err = (sub_task or {}).get("error", "unknown error")
-                                    stats["parsed_failed"] += 1
-                                    stats["parse_details"].append({"name": name, "status": "failed", "error": err})
-                                    _log(f"  Parse FAILED: {name} — {err}")
-                                break
-                    except Exception as e:
-                        logger.error(f"Auto pipeline parse failed for {ipo.get('id')}: {e}")
+                parse_results = await asyncio.gather(*[_parse_and_poll(i) for i in to_parse])
+                for r in parse_results:
+                    if r["status"] == "ok":
+                        stats["parsed_success"] += 1
+                        stats["parse_details"].append(r)
+                        _log(f"  Parse OK: {r['name']} — {r['groups_parsed']} groups parsed, {r['groups_skipped']} cached/skipped")
+                    elif r["status"] == "timeout":
                         stats["parsed_failed"] += 1
-                        stats["parse_details"].append({"name": name, "status": "error", "error": str(e)})
-                        _log(f"  Parse ERROR: {name} — {e}")
+                        _log(f"  Parse TIMEOUT: {r['name']}")
+                    else:
+                        stats["parsed_failed"] += 1
+                        err = r.get("error", "unknown")
+                        stats["parse_details"].append(r)
+                        _log(f"  Parse FAILED: {r['name']} — {err}")
 
                 _log(f"Pipeline complete — resolved {stats['resolved_success']}/{stats['pending_resolve']}, "
                      f"parsed {stats['parsed_success']}/{stats['pending_parse']}")
