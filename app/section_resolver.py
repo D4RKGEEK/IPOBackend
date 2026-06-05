@@ -597,7 +597,7 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
         # Mark document as resolved so the pipeline audit skips re-downloading next run.
         # drhp_processed / rhp_processed are Integer(0/1) columns — use 1, not True.
         if saved_sections:
-            _flag = "rhp_processed" if doc_type == "rhp" else "drhp_processed"
+            _flag = "rhp_processed" if doc_type in ("rhp", "fp") else "drhp_processed"
             try:
                 db_service.update_ipo_field(ipo_id, _flag, 1)
             except Exception as _e:
