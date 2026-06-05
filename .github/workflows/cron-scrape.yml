@@ -12,7 +12,7 @@
 #
 # Setup (one-time):
 #   GitHub repo → Settings → Secrets and variables → Actions → New repository secret
-#     IPO_API_URL          e.g. https://ipo-scraper.fly.dev   (no trailing slash)
+#     IPO_API_URL          http://137.184.63.178:8001   (DO droplet, no trailing slash)
 #     INTERNAL_API_KEY     same value as the API's INTERNAL_API_KEY env var
 
 name: Cron scrape
