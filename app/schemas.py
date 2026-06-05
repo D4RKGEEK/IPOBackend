@@ -159,6 +159,8 @@ class IPOSummary(BaseModel):
     price_band: Optional[str] = None
     platform: Optional[str] = None
     issue_type: Optional[str] = None
+    symbol: Optional[str] = None
+    subscription_latest: Optional[dict] = None
     # Raw Upstox data (always included)
     upstox_data: Optional[UpstoxData] = None
     # Only present when raw=true

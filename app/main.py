@@ -1153,9 +1153,49 @@ async def pipeline_auto(
 
                 _log(f"Pipeline complete — resolved {stats['resolved_success']}/{stats['pending_resolve']}, "
                      f"parsed {stats['parsed_success']}/{stats['pending_parse']}")
+
+                # 5. Subscription Data — refresh for all open/closed IPOs
+                stats["stage"] = "subscription"
+                stats["current_action"] = "Fetching subscription data for open/closed IPOs..."
+                _update_stats(0.85)
+                try:
+                    from app.subscription_data.service import fetch_all_open as fetch_subs
+                    sub_result = await fetch_subs()
+                    stats["subscription"] = sub_result
+                    _log(f"Subscription — {sub_result.get('fetched',0)} fetched, "
+                         f"{sub_result.get('skipped',0)} skipped, {sub_result.get('failed',0)} failed")
+                except Exception as e:
+                    logger.warning("pipeline: subscription failed: %s", e)
+                    stats["subscription"] = {"error": str(e)}
+                    _log(f"Subscription FAILED — {e}")
+
+                # 6. Historical Price Data — refresh for all eligible IPOs
+                stats["stage"] = "historical"
+                stats["current_action"] = "Fetching historical candle data..."
+                _update_stats(0.92)
+                try:
+                    from app.historical_data.service import fetch_all_open as fetch_hist
+                    hist_result = await fetch_hist()
+                    stats["historical"] = hist_result
+                    _log(f"Historical — {hist_result.get('fetched',0)} fetched, "
+                         f"{hist_result.get('skipped',0)} skipped, {hist_result.get('failed',0)} failed")
+                except Exception as e:
+                    logger.warning("pipeline: historical failed: %s", e)
+                    stats["historical"] = {"error": str(e)}
+                    _log(f"Historical FAILED — {e}")
+
                 stats["stage"] = "completed"
                 stats["current_action"] = "Pipeline complete"
                 stats["current_ipo"] = None
+
+                # Send pipeline report (email + Telegram)
+                try:
+                    from app.pipeline_report import send_pipeline_report
+                    send_pipeline_report(stats)
+                    _log("Pipeline report sent (email + Telegram)")
+                except Exception as report_err:
+                    logger.warning("Failed to send pipeline report: %s", report_err)
+
                 mgr.complete(tid, result=stats)
 
             asyncio.run(_run_async())
@@ -1165,6 +1205,76 @@ async def pipeline_auto(
 
     await run_in_background(task_id, _run)
     return {"task_id": task_id, "status": "started", "message": "Pipeline started in background. Poll GET /api/tasks/{task_id}"}
+
+
+# ─── Subscription Data ─────────────────────────────────────
+@app.post("/api/ipos/{ipo_id}/subscription", tags=["Aggregation"],
+    summary="Fetch subscription data for an IPO from NSE (primary) or BSE (fallback)",
+    description="Fetches category-wise subscription breakdown. Stores in ipo_master.subscription_latest.")
+async def fetch_subscription(ipo_id: int = Path(...), _auth: None = Depends(_require_internal_key)):
+    from app.subscription_data.service import fetch_and_store
+    result = await fetch_and_store(ipo_id)
+    if not result:
+        raise HTTPException(404, "No subscription data available (IPO must be open/closed with a valid symbol)")
+    return {"ipo_id": ipo_id, "data": result}
+
+
+@app.post("/api/subscription/refresh", tags=["Aggregation"],
+    summary="Refresh subscription data for all open/closed IPOs",
+    description="Fetches subscription for every eligible IPO in one batch.")
+async def refresh_all_subscriptions(_auth: None = Depends(_require_internal_key)):
+    from app.subscription_data.service import fetch_all_open
+    result = await fetch_all_open()
+    return {"status": "ok", **result}
+
+
+# ─── Historical Price Data ───────────────────────────────
+@app.post("/api/ipos/{ipo_id}/historical", tags=["Aggregation"],
+    summary="Fetch historical candle data for an IPO via Upstox API",
+    description="Fetches daily O/H/L/C/volume via ISIN. Upserts in ipo_historical_prices table.")
+async def fetch_historical(ipo_id: int = Path(...), _auth: None = Depends(_require_internal_key)):
+    from app.historical_data.service import fetch_and_store
+    result = await fetch_and_store(ipo_id)
+    if not result:
+        raise HTTPException(404, "No historical data available (need ISIN + valid Upstox token)")
+    return {"ipo_id": ipo_id, "data": result}
+
+
+@app.post("/api/historical/refresh", tags=["Aggregation"],
+    summary="Refresh historical prices for all open/closed/listed IPOs",
+    description="Fetches candle data for every eligible IPO. Daily cron target.")
+async def refresh_all_historical(_auth: None = Depends(_require_internal_key)):
+    from app.historical_data.service import fetch_all_open
+    result = await fetch_all_open()
+    return {"status": "ok", **result}
+
+
+@app.get("/api/ipos/{ipo_id}/historical", tags=["Aggregation"],
+    summary="Get stored historical price data for an IPO",
+    description="Returns the latest candle summary + full candle array for charting.")
+async def get_historical(ipo_id: int = Path(...)):
+    from app.db.engine import get_session
+    from app.db.models import IPOHistoricalPrice
+    with get_session() as s:
+        rec = s.query(IPOHistoricalPrice).filter(
+            IPOHistoricalPrice.ipo_master_id == ipo_id
+        ).first()
+    if not rec:
+        raise HTTPException(404, "No historical data found. Run POST /api/ipos/{id}/historical first.")
+    return {
+        "ipo_id": rec.ipo_master_id,
+        "isin": rec.isin,
+        "exchange_type": rec.exchange_type,
+        "fetch_date": rec.fetch_date,
+        "last_updated": rec.last_updated.isoformat() if rec.last_updated else None,
+        "summary": {
+            "open": rec.open, "high": rec.high, "low": rec.low, "close": rec.close,
+            "volume": rec.volume, "prev_close": rec.prev_close,
+            "change_pct": rec.change_pct, "color": rec.color,
+            "num_candles": rec.num_candles,
+        },
+        "candles": rec.candles or [],
+    }
 
 
 # ─── Status Changes ────────────────────────────────────────
@@ -1356,6 +1466,8 @@ def _format_ipo(ipo) -> IPOSummary:
         d = ipo.to_dict()
         docs = d.get("documents", {})
         upstox_raw = d.get("upstox_data")
+        symbol = (upstox_raw or {}).get("symbol") if isinstance(upstox_raw, dict) else None
+        sub = d.get("subscription_latest")
         return IPOSummary(
             id=d.get("id", 0), company_name=d.get("company_name", ""),
             status=d.get("status", "unknown"),
@@ -1364,6 +1476,7 @@ def _format_ipo(ipo) -> IPOSummary:
             documents={"drhp": docs.get("drhp"), "rhp": docs.get("rhp"), "final_prospectus": docs.get("final_prospectus")},
             price_band=d.get("price_band"), platform=d.get("platform"),
             issue_type=d.get("issue_type"), upstox_data=upstox_raw,
+            symbol=symbol, subscription_latest=sub,
         )
     # Legacy dict fallback
     docs = ipo.get("documents", {}) if isinstance(ipo, dict) else {}

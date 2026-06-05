@@ -1,5 +1,6 @@
 # Full IPO pipeline: scrape → find new/updated → resolve → parse
-# Runs 3 times/day via GitHub Actions.
+#                    → subscription → historical price → report
+# Runs every 3 hours via GitHub Actions.
 #
 # Setup (one-time):
 #   GitHub repo → Settings → Secrets and variables → Actions → New repository secret
@@ -7,14 +8,14 @@
 #     INTERNAL_API_KEY     same value as the API's INTERNAL_API_KEY env var
 #
 # Notes:
-#   - Uses the /api/pipeline/auto endpoint (scrape + resolve + parse + report)
-#   - Report is auto-sent via email + Telegram by the pipeline itself
+#   - Uses the /api/pipeline/auto endpoint (scrape + resolve + parse + subscription + historical + report)
+#   - Report is auto-sent via Telegram by the pipeline itself
 
 name: IPO Pipeline
 
 on:
   schedule:
-    - cron: "0 8,14,20 * * *"
+    - cron: "0 */3 * * *"
   workflow_dispatch:
     inputs:
       year:
@@ -68,7 +69,7 @@ jobs:
               if [ "$status" = "completed" ]; then
                 echo ""
                 echo "=== Pipeline complete! ==="
-                echo "$task" | jq '{status, result: {stage, resolved_success, resolved_failed, parsed_success, parsed_failed, total_ipos_checked, new_ipos_found: .result.scrape_result.new_ipos_found}}'
+                echo "$task" | jq '{status, result: {stage, resolved_success, resolved_failed, parsed_success, parsed_failed, total_ipos_checked, new_ipos_found: .result.scrape_result.new_ipos_found, subscription_fetched: .result.subscription.fetched, historical_fetched: .result.historical.fetched}}'
                 exit 0
               fi
               if [ "$status" = "failed" ]; then
