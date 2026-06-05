@@ -1153,6 +1153,37 @@ async def pipeline_auto(
 
                 _log(f"Pipeline complete — resolved {stats['resolved_success']}/{stats['pending_resolve']}, "
                      f"parsed {stats['parsed_success']}/{stats['pending_parse']}")
+
+                # 5. Subscription Data — refresh for all open/closed IPOs
+                stats["stage"] = "subscription"
+                stats["current_action"] = "Fetching subscription data for open/closed IPOs..."
+                _update_stats(0.85)
+                try:
+                    from app.subscription_data.service import fetch_all_open as fetch_subs
+                    sub_result = await fetch_subs()
+                    stats["subscription"] = sub_result
+                    _log(f"Subscription — {sub_result.get('fetched',0)} fetched, "
+                         f"{sub_result.get('skipped',0)} skipped, {sub_result.get('failed',0)} failed")
+                except Exception as e:
+                    logger.warning("pipeline: subscription failed: %s", e)
+                    stats["subscription"] = {"error": str(e)}
+                    _log(f"Subscription FAILED — {e}")
+
+                # 6. Historical Price Data — refresh for all eligible IPOs
+                stats["stage"] = "historical"
+                stats["current_action"] = "Fetching historical candle data..."
+                _update_stats(0.92)
+                try:
+                    from app.historical_data.service import fetch_all_open as fetch_hist
+                    hist_result = await fetch_hist()
+                    stats["historical"] = hist_result
+                    _log(f"Historical — {hist_result.get('fetched',0)} fetched, "
+                         f"{hist_result.get('skipped',0)} skipped, {hist_result.get('failed',0)} failed")
+                except Exception as e:
+                    logger.warning("pipeline: historical failed: %s", e)
+                    stats["historical"] = {"error": str(e)}
+                    _log(f"Historical FAILED — {e}")
+
                 stats["stage"] = "completed"
                 stats["current_action"] = "Pipeline complete"
                 stats["current_ipo"] = None
