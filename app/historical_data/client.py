@@ -50,8 +50,8 @@ class UpstoxHistoricalClient:
         today = date.today().isoformat()
         instrument_key = f"{exchange}|{isin}"
         # Upstox: /historical-candle/{instrument_key}/{interval}/{to_date}/{from_date}
-        # We fetch from 2024-01-01 to today to build historical chart
-        url = f"{HISTORICAL_URL}/{instrument_key}/{interval}/{today}/2024-01-01"
+        # Same date for both = just that day's candle (daily cron target)
+        url = f"{HISTORICAL_URL}/{instrument_key}/{interval}/{today}/{today}"
 
         headers = {
             **HEADERS,

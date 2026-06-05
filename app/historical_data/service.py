@@ -167,7 +167,7 @@ def _get_ipo(ipo_id: int) -> Optional[IPOMaster]:
 
 
 def _upsert(ipo_id: int, data: dict) -> None:
-    """Upsert historical price row — one row per IPO."""
+    """Upsert historical price row — append candle to existing list."""
     with get_session() as s:
         existing = (
             s.query(IPOHistoricalPrice)
@@ -175,11 +175,33 @@ def _upsert(ipo_id: int, data: dict) -> None:
             .first()
         )
         now_dt = datetime.now(timezone.utc)
+        today = date.today().isoformat()
+        new_candles = data.get("candles", [])
 
         if existing:
-            for k, v in data.items():
-                setattr(existing, k, v)
+            # Append only candles whose date isn't already stored
+            existing_dates = {c["time"][:10] for c in (existing.candles or [])}
+            merged = list(existing.candles or [])
+            for c in new_candles:
+                c_date = c["time"][:10]
+                if c_date not in existing_dates:
+                    merged.append(c)
+                    existing_dates.add(c_date)
+            merged.sort(key=lambda x: x["time"])
+
+            existing.candles = merged
+            existing.num_candles = len(merged)
+            existing.fetch_date = today
             existing.last_updated = now_dt
+
+            # Update summary from latest candle
+            if merged:
+                latest = merged[-1]
+                existing.open = latest["open"]
+                existing.high = latest["high"]
+                existing.low = latest["low"]
+                existing.close = latest["close"]
+                existing.volume = latest["volume"]
         else:
             record = IPOHistoricalPrice(
                 ipo_master_id=ipo_id,
