@@ -112,6 +112,10 @@ class IPOMaster(Base):
             "publish_status": self.publish_status,
             "unified_version": self.unified_version,
             "unified_updated_at": self.unified_updated_at.isoformat() if self.unified_updated_at else None,
+            # Flat URL fields (mirroring documents dict) — needed by pipeline for new_doc_url detection
+            "rhp_url": self.rhp_url,
+            "drhp_url": self.drhp_url,
+            "final_prospectus_url": self.final_prospectus_url,
             "upstox_data": self.upstox_data,
             "source_ids": self.source_ids,
             "field_provenance": self.field_provenance,
