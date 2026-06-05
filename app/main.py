@@ -1156,6 +1156,15 @@ async def pipeline_auto(
                 stats["stage"] = "completed"
                 stats["current_action"] = "Pipeline complete"
                 stats["current_ipo"] = None
+
+                # Send pipeline report (email + Telegram)
+                try:
+                    from app.pipeline_report import send_pipeline_report
+                    send_pipeline_report(stats)
+                    _log("Pipeline report sent (email + Telegram)")
+                except Exception as report_err:
+                    logger.warning("Failed to send pipeline report: %s", report_err)
+
                 mgr.complete(tid, result=stats)
 
             asyncio.run(_run_async())
@@ -1165,6 +1174,27 @@ async def pipeline_auto(
 
     await run_in_background(task_id, _run)
     return {"task_id": task_id, "status": "started", "message": "Pipeline started in background. Poll GET /api/tasks/{task_id}"}
+
+
+# ─── Subscription Data ─────────────────────────────────────
+@app.post("/api/ipos/{ipo_id}/subscription", tags=["Aggregation"],
+    summary="Fetch subscription data for an IPO from NSE (primary) or BSE (fallback)",
+    description="Fetches category-wise subscription breakdown. Stores in ipo_master.subscription_latest.")
+async def fetch_subscription(ipo_id: int = Path(...), _auth: None = Depends(_require_internal_key)):
+    from app.subscription_data.service import fetch_and_store
+    result = await fetch_and_store(ipo_id)
+    if not result:
+        raise HTTPException(404, "No subscription data available (IPO must be open/closed with a valid symbol)")
+    return {"ipo_id": ipo_id, "data": result}
+
+
+@app.post("/api/subscription/refresh", tags=["Aggregation"],
+    summary="Refresh subscription data for all open/closed IPOs",
+    description="Fetches subscription for every eligible IPO in one batch.")
+async def refresh_all_subscriptions(_auth: None = Depends(_require_internal_key)):
+    from app.subscription_data.service import fetch_all_open
+    result = await fetch_all_open()
+    return {"status": "ok", **result}
 
 
 # ─── Status Changes ────────────────────────────────────────
@@ -1356,6 +1386,8 @@ def _format_ipo(ipo) -> IPOSummary:
         d = ipo.to_dict()
         docs = d.get("documents", {})
         upstox_raw = d.get("upstox_data")
+        symbol = (upstox_raw or {}).get("symbol") if isinstance(upstox_raw, dict) else None
+        sub = d.get("subscription_latest")
         return IPOSummary(
             id=d.get("id", 0), company_name=d.get("company_name", ""),
             status=d.get("status", "unknown"),
@@ -1364,6 +1396,7 @@ def _format_ipo(ipo) -> IPOSummary:
             documents={"drhp": docs.get("drhp"), "rhp": docs.get("rhp"), "final_prospectus": docs.get("final_prospectus")},
             price_band=d.get("price_band"), platform=d.get("platform"),
             issue_type=d.get("issue_type"), upstox_data=upstox_raw,
+            symbol=symbol, subscription_latest=sub,
         )
     # Legacy dict fallback
     docs = ipo.get("documents", {}) if isinstance(ipo, dict) else {}

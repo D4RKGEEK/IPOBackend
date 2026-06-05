@@ -1,8 +1,5 @@
 """
-NSE API client for IPO subscription data.
-
-Primary: direct GET to NSE IPO endpoints (works without cookies for most symbols).
-Fallback: visit nseindia.com → capture cookies → retry with session cookies.
+NSE + BSE API clients for IPO subscription data.
 """
 from __future__ import annotations
 
@@ -11,19 +8,16 @@ from typing import Optional
 
 import httpx
 
-from app.subscription_data.schemas import (
-    NSEBidDetailsResponse,
-    NSEActiveCategoryResponse,
-)
+from app.subscription_data.schemas import BidDetailRow, BseCatRow
 
 logger = logging.getLogger(__name__)
 
-# ─── Constants ─────────────────────────────────────────────────
-
 NSE_BASE = "https://www.nseindia.com"
-BID_DETAILS_URL = f"{NSE_BASE}/api/ipo-bid-details"
-ACTIVE_CATEGORY_URL = f"{NSE_BASE}/api/ipo-active-category"
+NSE_BID_DETAILS = f"{NSE_BASE}/api/ipo-bid-details"
 NSE_HOMEPAGE = NSE_BASE
+
+BSE_API = "https://api.bseindia.com/BseIndiaAPI/api"
+BSE_SUBS_URL = f"{BSE_API}/Pubissues_BBS_CumultveCatdem_ng/w"
 
 HEADERS = {
     "User-Agent": (
@@ -33,108 +27,88 @@ HEADERS = {
     ),
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
-    "Referer": f"{NSE_BASE}/market-data/ipo-subscription-status",
 }
 
 
-# ─── Client ────────────────────────────────────────────────────
-
-class NSESubscriptionClient:
-    """
-    Fetches IPO subscription data from NSE APIs.
-
-    Two-phase strategy:
-      1. Direct GET with standard headers (works in most cases).
-      2. If that fails, establish a session by visiting nseindia.com,
-         capture cookies, and retry.
-    """
-
+class NSEClient:
+    """NSE IPO subscription. Phase 1: direct, Phase 2: session retry."""
     def __init__(self, client: httpx.AsyncClient):
         self.client = client
-        self._session_established = False
+        self._session_ok = False
 
-    async def fetch_bid_details(self, symbol: str) -> Optional[NSEBidDetailsResponse]:
-        """Fetch /api/ipo-bid-details for a symbol. Returns None on failure."""
-        for attempt, with_session in enumerate([False, True], 1):
-            if with_session and not self._session_established:
-                await self._establish_session()
-
-            url = f"{BID_DETAILS_URL}?symbol={symbol}&series=EQ"
+    async def fetch(self, symbol: str) -> Optional[tuple[list[BidDetailRow], Optional[str]]]:
+        for attempt, use_session in enumerate([False, True], 1):
+            if use_session and not self._session_ok:
+                await self._establish()
+            url = f"{NSE_BID_DETAILS}?symbol={symbol}&series=EQ"
+            h = {**HEADERS, "Referer": f"{NSE_BASE}/market-data/ipo-subscription-status"}
             try:
-                resp = await self.client.get(url, headers=self._headers(with_session), timeout=15)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return NSEBidDetailsResponse(**data)
-                logger.warning(
-                    "NSE bid-details attempt %d: HTTP %d for %s",
-                    attempt, resp.status_code, symbol,
-                )
+                resp = await self.client.get(url, headers=h, timeout=15)
+                if resp.status_code != 200:
+                    logger.warning("nse[%d] %s: HTTP %d", attempt, symbol, resp.status_code)
+                    continue
+                raw = resp.json()
+                raw_rows = raw.get("data") or []
+                update_time = raw.get("updateTime")
+                if not raw_rows:
+                    continue
+                rows = [
+                    BidDetailRow(**r) for r in raw_rows
+                    if isinstance(r, dict) and (r.get("srNo") or "").strip() not in ("", "Sr.No.", "Sr.No")
+                ]
+                if rows:
+                    return (rows, update_time)
             except Exception as e:
-                logger.warning(
-                    "NSE bid-details attempt %d failed for %s: %s",
-                    attempt, symbol, e,
-                )
-
-            if attempt == 1 and not with_session:
-                # First attempt failed — fall through to session retry
-                continue
-            break  # Session attempt also failed — give up
-
+                logger.warning("nse[%d] %s: %s", attempt, symbol, e)
         return None
 
-    async def fetch_active_category(self, symbol: str) -> Optional[NSEActiveCategoryResponse]:
-        """Fetch /api/ipo-active-category for a symbol. Returns None on failure."""
-        for attempt, with_session in enumerate([False, True], 1):
-            if with_session and not self._session_established:
-                await self._establish_session()
-
-            url = f"{ACTIVE_CATEGORY_URL}?symbol={symbol}"
-            try:
-                resp = await self.client.get(url, headers=self._headers(with_session), timeout=15)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return NSEActiveCategoryResponse(**data)
-                logger.warning(
-                    "NSE active-category attempt %d: HTTP %d for %s",
-                    attempt, resp.status_code, symbol,
-                )
-            except Exception as e:
-                logger.warning(
-                    "NSE active-category attempt %d failed for %s: %s",
-                    attempt, symbol, e,
-                )
-
-            if attempt == 1 and not with_session:
-                continue
-            break
-
-        return None
-
-    # ── Session management ──────────────────────────────────
-
-    async def _establish_session(self) -> None:
-        """Visit nseindia.com to get cookies, then store them in the client."""
+    async def _establish(self):
         try:
-            resp = await self.client.get(
-                NSE_HOMEPAGE,
-                headers={
-                    "User-Agent": HEADERS["User-Agent"],
-                    "Accept": "text/html,application/xhtml+xml,*/*",
-                },
-                timeout=15,
-            )
-            if resp.status_code in (200, 403):
-                # 403 is fine — Akamai blocks the page but cookies may still be set
-                logger.info("NSE session established (HTTP %d)", resp.status_code)
-                self._session_established = True
-            else:
-                logger.warning("NSE session establishment returned HTTP %d", resp.status_code)
+            r = await self.client.get(NSE_HOMEPAGE, headers={
+                "User-Agent": HEADERS["User-Agent"], "Accept": "text/html,*/*",
+            }, timeout=15)
+            if r.status_code in (200, 403):
+                self._session_ok = True
+                logger.info("nse session ok (HTTP %d)", r.status_code)
         except Exception as e:
-            logger.warning("NSE session establishment failed: %s", e)
+            logger.warning("nse session fail: %s", e)
 
-    def _headers(self, with_session: bool = False) -> dict[str, str]:
-        """Return headers — optionally include Referer from within nseindia.com."""
-        h = dict(HEADERS)
-        if with_session:
-            h["Referer"] = f"{NSE_BASE}/market-data/ipo-subscription-status"
-        return h
+
+class BSEClient:
+    """BSE IPO subscription via ipo_no, fallback to scrip_cd."""
+    def __init__(self, client: httpx.AsyncClient):
+        self.client = client
+
+    async def fetch(self, ipo_no: int, scrip_cd: Optional[int] = None) -> Optional[tuple[list[BseCatRow], Optional[str]]]:
+        result = await self._fetch(f"{BSE_SUBS_URL}?IPO_NO={ipo_no}")
+        if result:
+            return result
+        if scrip_cd:
+            result = await self._fetch(f"{BSE_SUBS_URL}?Scrip_cd={scrip_cd}")
+            if result:
+                return result
+        return None
+
+    async def _fetch(self, url: str) -> Optional[tuple[list[BseCatRow], Optional[str]]]:
+        h = {**HEADERS, "Referer": "https://www.bseindia.com/", "Origin": "https://www.bseindia.com"}
+        try:
+            resp = await self.client.get(url, headers=h, timeout=15, follow_redirects=True)
+            if resp.status_code != 200:
+                return None
+            raw = resp.json()
+            table = raw.get("Table") or []
+            rows = [
+                BseCatRow(**r) for r in table
+                if isinstance(r, dict) and r.get("SRNo", "").strip() not in ("", "Sr.No.", "Sr.No")
+            ]
+            if rows:
+                update_time = None
+                for r in rows:
+                    if r.Maxdt:
+                        update_time = r.Maxdt
+                        break
+                return (rows, update_time)
+            return None
+        except Exception as e:
+            logger.warning("bse: %s", e)
+            return None

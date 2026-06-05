@@ -86,9 +86,6 @@ class IPOMaster(Base):
     status_changes = relationship("IPOStatusHistory", back_populates="ipo",
                                    cascade="all, delete-orphan",
                                    order_by="IPOStatusHistory.change_date.desc()")
-    subscription_snapshots = relationship("IPOSubscriptionSnapshot", back_populates="ipo",
-                                          cascade="all, delete-orphan",
-                                          order_by="IPOSubscriptionSnapshot.created_at.desc()")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -246,30 +243,3 @@ class ScraperLog(Base):
     new_ipos_found: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status_changes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
-
-
-class IPOSubscriptionSnapshot(Base):
-    """Time-series snapshots of IPO subscription data from NSE."""
-    __tablename__ = "ipo_subscription_snapshots"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    ipo_master_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("ipo_master.id", ondelete="CASCADE"), nullable=False, index=True)
-    source: Mapped[str] = mapped_column(String(20), nullable=False)  # "bid_details" | "active_category"
-
-    # Raw API response stored for audit
-    raw_data: Mapped[dict] = mapped_column(SaJSON, nullable=False)
-
-    # Cleaned category-wise data as JSON
-    parsed_data: Mapped[dict] = mapped_column(SaJSON, nullable=False)
-
-    # Timestamps
-    update_time: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
-
-    # Relationship
-    ipo = relationship("IPOMaster", back_populates="subscription_snapshots")
-
-    __table_args__ = (
-        Index("idx_subs_ipo_source", "ipo_master_id", "source"),
-    )

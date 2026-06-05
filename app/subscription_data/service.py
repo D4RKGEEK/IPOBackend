@@ -1,187 +1,212 @@
 """
-Subscription service — fetches and stores IPO subscription data.
+Subscription service — NSE first, BSE fallback, consolidated JSON in subscription_latest.
 
-Logic:
-  1. Only fetches if IPO status is "open" (or optionally "closed" for final data).
-  2. Calls two NSE APIs: bid-details and active-category.
-  3. If APIs fail, retries with NSE session/cookies.
-  4. Stores raw + parsed data in `ipo_subscription_snapshots` table.
-  5. Updates `ipo_master.subscription_latest` with latest parsed data.
+Flow per IPO:
+  1. Only if status in ("open", "closed")
+  2. Try NSE (symbol from upstox_data)
+  3. NSE failed? → Try BSE (ipo_no from bse_data)
+  4. Parse into consolidated JSON → store in ipo_master.subscription_latest
+
+Stored shape:
+  {
+    "qib": {"offered": int, "bid": int, "times": float},
+    "hni_above_10l": {...},
+    "hni_2l_to_10l": {...},
+    "retail": {...},
+    "employee": {...},
+    "shareholder": {...},
+    "total": {...},
+    "source": "nse" | "bse",
+    "lastFetched": "2026-06-05T19:30:00Z",
+    "lastUpdate": "2026-06-05T19:00:00Z",
+    "lastUpdateNse": "2026-06-05T19:00:00Z",
+    "lastUpdateBse": null
+  }
 """
 from __future__ import annotations
 
-import json
 import logging
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
 
 from app.db.engine import get_session
-from app.db.models import IPOMaster, IPOSubscriptionSnapshot
-from app.subscription_data.client import NSESubscriptionClient
+from app.db.models import IPOMaster
+from app.subscription_data.client import NSEClient, BSEClient
 from app.subscription_data.schemas import (
-    NSEBidDetailsResponse,
-    NSEActiveCategoryResponse,
-    ParsedSubscription,
-    parse_bid_details,
-    parse_active_category,
+    CategoryData, BidDetailRow, BseCatRow, _int, _float, now_iso,
 )
 
 logger = logging.getLogger(__name__)
 
-# ─── Eligible statuses ─────────────────────────────────────────
+FETCH_STATUSES = {"open", "closed"}
 
-FETCH_STATUSES = {"open", "closed"}  # only fetch for these
 
-# ─── Public API ────────────────────────────────────────────────
+# ─── Main entry ────────────────────────────────────────────────
 
 async def fetch_and_store(ipo_id: int) -> Optional[dict[str, Any]]:
-    """
-    Fetch subscription data for one IPO and store it.
-    Only runs if IPO status is "open" or "closed".
-
-    Returns the parsed data dict, or None if skipped/failed.
-    """
-    # 1. Check eligibility
+    """Fetch subscription, parse, store in DB. Returns stored dict or None."""
     ipo = _get_ipo(ipo_id)
-    if not ipo:
-        logger.warning("subscription: IPO %d not found", ipo_id)
-        return None
-    if ipo.status not in FETCH_STATUSES:
-        logger.debug(
-            "subscription: %s status=%s — not eligible (need open/closed)",
-            ipo.company_name, ipo.status,
-        )
+    if not ipo or ipo.status not in FETCH_STATUSES:
         return None
 
-    # 2. Resolve symbol from upstox data
-    symbol = _get_symbol(ipo)
-    if not symbol:
-        logger.warning("subscription: %s has no symbol — skipping", ipo.company_name)
+    async with httpx.AsyncClient(follow_redirects=True) as c:
+        result = None
+
+        # 1. NSE
+        symbol = _get_symbol(ipo)
+        if symbol:
+            nse = NSEClient(c)
+            fetched = await nse.fetch(symbol)
+            if fetched:
+                rows, update_time = fetched
+                result = _parse_nse(rows, update_time)
+                logger.info("subs: %s ← NSE (%s)", ipo.company_name, symbol)
+
+        # 2. BSE fallback
+        if not result:
+            bse_data = ipo.bse_data or {}
+            ipo_no = bse_data.get("ipo_no")
+            scrip_cd = bse_data.get("scrip_cd")
+            if ipo_no:
+                bse = BSEClient(c)
+                fetched = await bse.fetch(ipo_no, scrip_cd)
+                if fetched:
+                    rows, update_time = fetched
+                    result = _parse_bse(rows, update_time)
+                    logger.info("subs: %s ← BSE (ipo_no=%s)", ipo.company_name, ipo_no)
+
+    if not result:
+        logger.debug("subs: %s — both sources failed", ipo.company_name)
         return None
 
-    logger.info("subscription: fetching %s (symbol=%s, status=%s)",
-                ipo.company_name, symbol, ipo.status)
-
-    # 3. Fetch from NSE APIs
-    async with httpx.AsyncClient(follow_redirects=True) as http_client:
-        nse = NSESubscriptionClient(http_client)
-
-        bid_details = await nse.fetch_bid_details(symbol)
-        active_category = await nse.fetch_active_category(symbol)
-
-    # 4. Parse into clean structure
-    best: Optional[ParsedSubscription] = None
-    raw_saved: list[dict] = []
-
-    if bid_details:
-        parsed = parse_bid_details(bid_details)
-        best = parsed
-        raw_saved.append({"source": "bid_details", "raw": bid_details.model_dump(mode="json")})
-        # Save snapshot to DB
-        _save_snapshot(ipo_id, "bid_details",
-                       raw_data=bid_details.model_dump(mode="json"),
-                       parsed_data=parsed.model_dump(mode="json"),
-                       update_time=parsed.update_time)
-        logger.info("subscription: %s bid-details saved", ipo.company_name)
-
-    if active_category:
-        parsed = parse_active_category(active_category)
-        # active-category is more authoritative (has updateTime + applications)
-        best = parsed
-        raw_saved.append({"source": "active_category", "raw": active_category.model_dump(mode="json")})
-        _save_snapshot(ipo_id, "active_category",
-                       raw_data=active_category.model_dump(mode="json"),
-                       parsed_data=parsed.model_dump(mode="json"),
-                       update_time=parsed.update_time)
-        logger.info("subscription: %s active-category saved", ipo.company_name)
-
-    if not best:
-        logger.warning("subscription: %s — both APIs failed", ipo.company_name)
-        return None
-
-    # 5. Update ipo_master.subscription_latest with best parsed data
-    best_dict = best.model_dump(mode="json")
-    _update_master(ipo_id, best_dict)
-
-    return best_dict
+    result["lastFetched"] = now_iso()
+    _write(ipo_id, result)
+    return result
 
 
-# ─── Internal helpers ──────────────────────────────────────────
+# ─── NSE parser ────────────────────────────────────────────────
+
+def _parse_nse(rows: list[BidDetailRow], update_time: Optional[str] = None) -> dict[str, Any]:
+    cats = {}
+    for r in rows:
+        sr = (r.srNo or "").strip()
+        cat = (r.category or "").strip()
+        cd = CategoryData(offered=_int(r.noOfSharesOffered),
+                          bid=_int(r.noOfsharesBid),
+                          times=_float(r.noOfTime))
+        _map(cats, sr, cat, cd)
+
+    _fill_totals(cats)
+    return {
+        **cats,
+        "source": "nse",
+        "lastUpdate": update_time,
+        "lastUpdateNse": update_time,
+        "lastUpdateBse": None,
+    }
+
+
+def _parse_bse(rows: list[BseCatRow], update_time: Optional[str] = None) -> dict[str, Any]:
+    cats = {}
+    for r in rows:
+        sr = (r.SRNo or "").strip()
+        cat = (r.col2 or "").strip()
+        cd = CategoryData(offered=_int(r.col3),
+                          bid=_int(r.col4),
+                          times=_float(r.col5))
+        ts = (r.Maxdt or "").strip()
+        if ts and not update_time:
+            update_time = ts
+        _map(cats, sr, cat, cd)
+
+    _fill_totals(cats)
+    return {
+        **cats,
+        "source": "bse",
+        "lastUpdate": update_time,
+        "lastUpdateNse": None,
+        "lastUpdateBse": update_time,
+    }
+
+
+# ─── Category mapper ───────────────────────────────────────────
+
+def _map(cats: dict, sr: str, cat: str, cd: CategoryData) -> None:
+    d = cd.model_dump()
+    if sr == "1":
+        cats["qib"] = d
+    elif sr == "2" or sr == "2":
+        cats["hni_above_10l"] = d
+    elif sr == "2.1":
+        cats["hni_above_10l"] = d
+    elif sr == "2.2":
+        cats["hni_2l_to_10l"] = d
+    elif sr == "3":
+        cats["retail"] = d
+    elif sr == "4":
+        cats["employee"] = d
+    elif sr == "5":
+        cats["shareholder"] = d
+    elif sr in ("", None) and "total" in cat.lower():
+        cats["total"] = d
+    elif not sr and "total" in cat.lower():
+        cats["total"] = d
+
+    # Also match BSE's "Total" row (no SRNo)
+    if not sr and cat.upper() == "TOTAL":
+        cats["total"] = d
+
+
+def _fill_totals(cats: dict) -> None:
+    if "total" not in cats:
+        offered = sum(cats.get(k, {}).get("offered", 0)
+                      for k in ("qib", "hni_above_10l", "hni_2l_to_10l", "retail"))
+        bid = sum(cats.get(k, {}).get("bid", 0)
+                  for k in ("qib", "hni_above_10l", "hni_2l_to_10l", "retail"))
+        times = round(bid / offered, 4) if offered else 0.0
+        cats["total"] = {"offered": offered, "bid": bid, "times": times}
+
+
+# ─── DB helpers ────────────────────────────────────────────────
 
 def _get_ipo(ipo_id: int) -> Optional[IPOMaster]:
-    """Fetch IPO row by ID."""
     with get_session() as s:
         return s.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
 
 
 def _get_symbol(ipo: IPOMaster) -> Optional[str]:
-    """Extract NSE symbol from upstox_data."""
-    if not ipo.upstox_data:
-        return None
-    return ipo.upstox_data.get("symbol") or None
+    u = ipo.upstox_data or {}
+    return u.get("symbol") if isinstance(u, dict) else None
 
 
-def _save_snapshot(
-    ipo_id: int,
-    source: str,
-    raw_data: dict,
-    parsed_data: dict,
-    update_time: Optional[str] = None,
-) -> None:
-    """Insert a row into ipo_subscription_snapshots."""
-    with get_session() as s:
-        snap = IPOSubscriptionSnapshot(
-            ipo_master_id=ipo_id,
-            source=source,
-            raw_data=raw_data,
-            parsed_data=parsed_data,
-            update_time=update_time,
-        )
-        s.add(snap)
-        s.commit()
-
-
-def _update_master(ipo_id: int, parsed_data: dict) -> None:
-    """Update ipo_master.subscription_latest with the latest parsed data."""
+def _write(ipo_id: int, data: dict) -> None:
     with get_session() as s:
         ipo = s.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
         if ipo:
-            ipo.subscription_latest = parsed_data
+            ipo.subscription_latest = data
             s.commit()
 
 
-# ─── Batch helper ──────────────────────────────────────────────
+# ─── Batch ─────────────────────────────────────────────────────
 
 async def fetch_all_open(limit: int = 50) -> dict[str, Any]:
-    """
-    Fetch subscription data for all eligible IPOs (status=open).
-
-    Returns a summary dict.
-    """
     with get_session() as s:
-        ipos = (
-            s.query(IPOMaster)
-            .filter(IPOMaster.status.in_(FETCH_STATUSES))
-            .order_by(IPOMaster.last_updated.desc().nullslast())
-            .limit(limit)
-            .all()
-        )
+        ipos = (s.query(IPOMaster)
+                .filter(IPOMaster.status.in_(FETCH_STATUSES))
+                .order_by(IPOMaster.last_updated.desc().nullslast())
+                .limit(limit).all())
 
     results = {"fetched": 0, "skipped": 0, "failed": 0, "details": []}
     for ipo in ipos:
         try:
-            data = await fetch_and_store(ipo.id)
-            if data:
-                results["fetched"] += 1
-                results["details"].append({"id": ipo.id, "name": ipo.company_name, "status": "ok"})
-            else:
-                results["skipped"] += 1
-                results["details"].append({"id": ipo.id, "name": ipo.company_name, "status": "skipped"})
+            d = await fetch_and_store(ipo.id)
+            results["details"].append({
+                "id": ipo.id, "name": ipo.company_name, "status": "ok" if d else "skipped",
+            })
+            if d: results["fetched"] += 1
+            else: results["skipped"] += 1
         except Exception as e:
-            logger.error("subscription: %s failed: %s", ipo.company_name, e)
             results["failed"] += 1
             results["details"].append({"id": ipo.id, "name": ipo.company_name, "status": "error", "error": str(e)})
-
     return results
