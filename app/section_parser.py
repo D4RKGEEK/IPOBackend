@@ -99,8 +99,9 @@ Text:
 
 def parse_all_sections(ipo_id: int, company_name: str = "", force: bool = False) -> dict:
     """Parse ALL sections in 2 DeepSeek calls. Returns unified JSON with input/output debug."""
-    from app.db_service import DatabaseService
-    from app.db_models import DocumentSection, get_session
+    from app.db.operations import DatabaseService
+    from app.db.models import DocumentSection
+    from app.db.engine import get_session
     db = DatabaseService()
 
     all_sections = []

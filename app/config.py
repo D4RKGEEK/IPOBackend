@@ -95,6 +95,14 @@ class Settings(BaseSettings):
                 url = "postgresql://" + url[len("postgres://"):]
             if url.startswith("postgresql://"):
                 url = "postgresql+psycopg://" + url[len("postgresql://"):]
+            # Strip query params that psycopg v3 doesn't support
+            # (pgbouncer mode, prepared_statement_cache_size, etc.)
+            from urllib.parse import urlparse, urlunparse
+            parsed = urlparse(url)
+            if parsed.query:
+                allowed = {"sslmode", "connect_timeout", "application_name"}
+                keep = [p for p in parsed.query.split("&") if p.split("=")[0] in allowed]
+                url = urlunparse(parsed._replace(query="&".join(keep)))
             return url
         return f"sqlite:///{self.ipos_db_path}"
 
@@ -130,10 +138,14 @@ class Settings(BaseSettings):
     bse_sme_delay_seconds: float = Field(default=0.5, ge=0)
     max_document_size_mb: int = Field(default=80, ge=1)
 
+    # ─── Upstox ──────────────────────────────────────────────────────
+    upstox_access_token: str = Field(default="", description="Upstox API Bearer token")
+
     # ─── SSL ─────────────────────────────────────────────────────────
     ssl_cert_file: Optional[str] = Field(default=None)
 
     # ─── Notifications (graceful degradation: blank = disabled) ──────
+    notifications_disabled: bool = Field(default=False, description="Set true to globally suppress all notifications")
     telegram_bot_token: str = Field(default="")
     telegram_chat_id: str = Field(default="")
     gmail_user: str = Field(default="")

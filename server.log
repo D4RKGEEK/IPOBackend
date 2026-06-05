@@ -1,0 +1,413 @@
+INFO:     Will watch for changes in these directories: ['/Users/vaibhav/Documents/IPOScraper']
+2026-06-04T01:46:31+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T01:46:31+0530 INFO    uvicorn.error                  Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+2026-06-04T01:46:31+0530 INFO    uvicorn.error                  Started reloader process [8590] using StatReload
+2026-06-04T01:46:32+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T01:46:32+0530 INFO    uvicorn.error                  Started server process [15669]
+2026-06-04T01:46:32+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T01:46:32+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:19:55+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/section_resolver.py'. Reloading...
+2026-06-04T02:19:55+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:19:56+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:19:56+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:19:56+0530 INFO    uvicorn.error                  Finished server process [15669]
+2026-06-04T02:19:57+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:19:57+0530 INFO    uvicorn.error                  Started server process [26787]
+2026-06-04T02:19:57+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:19:57+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:20:02+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/section_resolver.py'. Reloading...
+2026-06-04T02:20:02+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:20:02+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:20:02+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:20:02+0530 INFO    uvicorn.error                  Finished server process [26787]
+2026-06-04T02:20:04+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:20:04+0530 INFO    uvicorn.error                  Started server process [26829]
+2026-06-04T02:20:04+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:20:04+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:20:14+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/section_resolver.py'. Reloading...
+2026-06-04T02:20:14+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:20:14+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:20:14+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:20:14+0530 INFO    uvicorn.error                  Finished server process [26829]
+2026-06-04T02:20:15+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:20:15+0530 INFO    uvicorn.error                  Started server process [26891]
+2026-06-04T02:20:15+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:20:15+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:20:40+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/section_resolver.py'. Reloading...
+2026-06-04T02:20:40+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:20:40+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:20:40+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:20:40+0530 INFO    uvicorn.error                  Finished server process [26891]
+2026-06-04T02:20:41+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:20:41+0530 INFO    uvicorn.error                  Started server process [27036]
+2026-06-04T02:20:41+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:20:41+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:20:46+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/section_resolver.py'. Reloading...
+2026-06-04T02:20:46+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:20:46+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:20:46+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:20:46+0530 INFO    uvicorn.error                  Finished server process [27036]
+2026-06-04T02:20:47+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:20:47+0530 INFO    uvicorn.error                  Started server process [27075]
+2026-06-04T02:20:47+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:20:47+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:21:09+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T02:21:09+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:21:09+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:21:09+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:21:09+0530 INFO    uvicorn.error                  Finished server process [27075]
+2026-06-04T02:21:10+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:21:10+0530 INFO    uvicorn.error                  Started server process [27198]
+2026-06-04T02:21:10+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:21:10+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:32:00+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T02:32:00+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:32:00+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:32:00+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:32:00+0530 INFO    uvicorn.error                  Finished server process [27198]
+2026-06-04T02:32:03+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:32:03+0530 INFO    uvicorn.error                  Started server process [30952]
+2026-06-04T02:32:03+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:32:03+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:32:29+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T02:32:29+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:32:29+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:32:29+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:32:29+0530 INFO    uvicorn.error                  Finished server process [30952]
+2026-06-04T02:32:31+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:32:32+0530 INFO    uvicorn.error                  Started server process [31120]
+2026-06-04T02:32:32+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:32:32+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:32:46+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T02:32:46+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:32:46+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:32:46+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:32:46+0530 INFO    uvicorn.error                  Finished server process [31120]
+2026-06-04T02:32:48+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:32:48+0530 INFO    uvicorn.error                  Started server process [31209]
+2026-06-04T02:32:48+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:32:48+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:32:52+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T02:32:52+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:32:52+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:32:52+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:32:52+0530 INFO    uvicorn.error                  Finished server process [31209]
+2026-06-04T02:32:54+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:32:54+0530 INFO    uvicorn.error                  Started server process [31249]
+2026-06-04T02:32:54+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:32:54+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:36:04+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T02:36:04+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:36:05+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:36:05+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:36:05+0530 INFO    uvicorn.error                  Finished server process [31249]
+2026-06-04T02:36:06+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:36:07+0530 INFO    uvicorn.error                  Started server process [32197]
+2026-06-04T02:36:07+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:36:07+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:36:27+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T02:36:27+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:36:27+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:36:27+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:36:27+0530 INFO    uvicorn.error                  Finished server process [32197]
+2026-06-04T02:36:29+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:36:29+0530 INFO    uvicorn.error                  Started server process [32329]
+2026-06-04T02:36:29+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:36:29+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:44:31+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/services/scraper.py'. Reloading...
+2026-06-04T02:44:32+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:44:32+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:44:32+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:44:32+0530 INFO    uvicorn.error                  Finished server process [32329]
+2026-06-04T02:44:34+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:44:34+0530 INFO    uvicorn.error                  Started server process [34912]
+2026-06-04T02:44:34+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:44:34+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:44:47+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/services/scraper.py'. Reloading...
+2026-06-04T02:44:47+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:44:47+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:44:47+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:44:47+0530 INFO    uvicorn.error                  Finished server process [34912]
+2026-06-04T02:44:48+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:44:48+0530 INFO    uvicorn.error                  Started server process [34998]
+2026-06-04T02:44:48+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:44:48+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T02:44:54+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/services/scraper.py'. Reloading...
+2026-06-04T02:44:54+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T02:44:54+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T02:44:54+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T02:44:54+0530 INFO    uvicorn.error                  Finished server process [34998]
+2026-06-04T02:44:55+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T02:44:55+0530 INFO    uvicorn.error                  Started server process [35042]
+2026-06-04T02:44:55+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T02:44:55+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:03:00+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/section_resolver.py'. Reloading...
+2026-06-04T05:03:00+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:03:00+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:03:00+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:03:00+0530 INFO    uvicorn.error                  Finished server process [35042]
+2026-06-04T05:03:02+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:03:02+0530 INFO    uvicorn.error                  Started server process [76043]
+2026-06-04T05:03:02+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:03:02+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:03:14+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T05:03:14+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:03:14+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:03:14+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:03:14+0530 INFO    uvicorn.error                  Finished server process [76043]
+2026-06-04T05:03:18+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:03:18+0530 INFO    uvicorn.error                  Started server process [76114]
+2026-06-04T05:03:18+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:03:18+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:14:57+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/section_resolver.py'. Reloading...
+2026-06-04T05:14:57+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:14:58+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:14:58+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:14:58+0530 INFO    uvicorn.error                  Finished server process [76114]
+2026-06-04T05:15:08+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:15:09+0530 INFO    uvicorn.error                  Started server process [79654]
+2026-06-04T05:15:09+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:15:09+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:15:12+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/section_resolver.py'. Reloading...
+2026-06-04T05:15:12+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:15:12+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:15:12+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:15:12+0530 INFO    uvicorn.error                  Finished server process [79654]
+2026-06-04T05:15:15+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:15:15+0530 INFO    uvicorn.error                  Started server process [79708]
+2026-06-04T05:15:15+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:15:15+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:15:17+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/section_resolver.py'. Reloading...
+2026-06-04T05:15:17+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:15:17+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:15:17+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:15:17+0530 INFO    uvicorn.error                  Finished server process [79708]
+2026-06-04T05:15:19+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:15:20+0530 INFO    uvicorn.error                  Started server process [79733]
+2026-06-04T05:15:20+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:15:20+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:19:00+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T05:19:00+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:19:01+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:19:01+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:19:01+0530 INFO    uvicorn.error                  Finished server process [79733]
+2026-06-04T05:19:02+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:19:02+0530 INFO    uvicorn.error                  Started server process [80898]
+2026-06-04T05:19:02+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:19:02+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:22:09+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/unified.py'. Reloading...
+2026-06-04T05:22:09+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:22:09+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:22:09+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:22:09+0530 INFO    uvicorn.error                  Finished server process [80898]
+2026-06-04T05:22:10+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:22:10+0530 INFO    uvicorn.error                  Started server process [81968]
+2026-06-04T05:22:10+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:22:10+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:22:21+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T05:22:21+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:22:21+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:22:21+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:22:21+0530 INFO    uvicorn.error                  Finished server process [81968]
+2026-06-04T05:22:22+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:22:22+0530 INFO    uvicorn.error                  Started server process [82026]
+2026-06-04T05:22:22+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:22:22+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:22:32+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T05:22:33+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:22:33+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:22:33+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:22:33+0530 INFO    uvicorn.error                  Finished server process [82026]
+2026-06-04T05:22:34+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:22:34+0530 INFO    uvicorn.error                  Started server process [82105]
+2026-06-04T05:22:34+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:22:34+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:25:52+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/db/operations.py'. Reloading...
+2026-06-04T05:25:52+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:25:52+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:25:52+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:25:52+0530 INFO    uvicorn.error                  Finished server process [82105]
+2026-06-04T05:25:54+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:25:54+0530 INFO    uvicorn.error                  Started server process [83165]
+2026-06-04T05:25:54+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:25:54+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:26:08+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/unified.py'. Reloading...
+2026-06-04T05:26:08+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:26:08+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:26:08+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:26:08+0530 INFO    uvicorn.error                  Finished server process [83165]
+2026-06-04T05:26:10+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:26:10+0530 INFO    uvicorn.error                  Started server process [83282]
+2026-06-04T05:26:10+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:26:10+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:27:30+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/unified.py'. Reloading...
+2026-06-04T05:27:30+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:27:30+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:27:30+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:27:30+0530 INFO    uvicorn.error                  Finished server process [83282]
+2026-06-04T05:27:31+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:27:31+0530 INFO    uvicorn.error                  Started server process [83682]
+2026-06-04T05:27:31+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:27:31+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:27:37+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/unified.py'. Reloading...
+2026-06-04T05:27:37+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:27:37+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:27:37+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:27:37+0530 INFO    uvicorn.error                  Finished server process [83682]
+2026-06-04T05:27:38+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:27:38+0530 INFO    uvicorn.error                  Started server process [83723]
+2026-06-04T05:27:38+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:27:38+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:29:24+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/db/operations.py'. Reloading...
+2026-06-04T05:29:24+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:29:24+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:29:24+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:29:24+0530 INFO    uvicorn.error                  Finished server process [83723]
+2026-06-04T05:29:25+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:29:25+0530 INFO    uvicorn.error                  Started server process [84245]
+2026-06-04T05:29:25+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:29:25+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:34:31+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/status.py'. Reloading...
+2026-06-04T05:34:31+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:34:31+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:34:31+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:34:31+0530 INFO    uvicorn.error                  Finished server process [84245]
+2026-06-04T05:34:32+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:34:32+0530 INFO    uvicorn.error                  Started server process [85744]
+2026-06-04T05:34:32+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:34:32+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:38:19+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/db/operations.py'. Reloading...
+2026-06-04T05:38:19+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:38:19+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:38:19+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:38:19+0530 INFO    uvicorn.error                  Finished server process [85744]
+2026-06-04T05:38:21+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:38:21+0530 INFO    uvicorn.error                  Started server process [86873]
+2026-06-04T05:38:21+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:38:21+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:46:36+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/db/operations.py'. Reloading...
+2026-06-04T05:46:36+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:46:36+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:46:36+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:46:36+0530 INFO    uvicorn.error                  Finished server process [86873]
+2026-06-04T05:46:38+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:46:38+0530 INFO    uvicorn.error                  Started server process [89694]
+2026-06-04T05:46:38+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:46:38+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:46:44+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/db/operations.py'. Reloading...
+2026-06-04T05:46:44+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:46:44+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:46:44+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:46:44+0530 INFO    uvicorn.error                  Finished server process [89694]
+2026-06-04T05:46:46+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:46:46+0530 INFO    uvicorn.error                  Started server process [89750]
+2026-06-04T05:46:46+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:46:46+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:47:05+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/section_resolver.py'. Reloading...
+2026-06-04T05:47:05+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:47:05+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:47:05+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:47:05+0530 INFO    uvicorn.error                  Finished server process [89750]
+2026-06-04T05:47:06+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:47:06+0530 INFO    uvicorn.error                  Started server process [89848]
+2026-06-04T05:47:06+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:47:06+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:47:41+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/db/operations.py'. Reloading...
+2026-06-04T05:47:41+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:47:41+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:47:41+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:47:41+0530 INFO    uvicorn.error                  Finished server process [89848]
+2026-06-04T05:47:43+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:47:43+0530 INFO    uvicorn.error                  Started server process [90050]
+2026-06-04T05:47:43+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:47:43+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:47:50+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T05:47:50+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:47:50+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:47:50+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:47:50+0530 INFO    uvicorn.error                  Finished server process [90050]
+2026-06-04T05:47:52+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:47:52+0530 INFO    uvicorn.error                  Started server process [90097]
+2026-06-04T05:47:52+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:47:52+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:48:02+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T05:48:02+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:48:02+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:48:02+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:48:02+0530 INFO    uvicorn.error                  Finished server process [90097]
+2026-06-04T05:48:03+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:48:03+0530 INFO    uvicorn.error                  Started server process [90151]
+2026-06-04T05:48:03+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:48:03+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:48:11+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/main.py'. Reloading...
+2026-06-04T05:48:11+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:48:11+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:48:11+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:48:11+0530 INFO    uvicorn.error                  Finished server process [90151]
+2026-06-04T05:48:12+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:48:12+0530 INFO    uvicorn.error                  Started server process [90205]
+2026-06-04T05:48:12+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:48:12+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:53:59+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/clients/merger.py'. Reloading...
+2026-06-04T05:53:59+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:53:59+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:53:59+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:53:59+0530 INFO    uvicorn.error                  Finished server process [90205]
+2026-06-04T05:54:00+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:54:01+0530 INFO    uvicorn.error                  Started server process [91937]
+2026-06-04T05:54:01+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:54:01+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:54:06+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/services/scraper.py'. Reloading...
+2026-06-04T05:54:06+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:54:06+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:54:06+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:54:06+0530 INFO    uvicorn.error                  Finished server process [91937]
+2026-06-04T05:54:07+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:54:07+0530 INFO    uvicorn.error                  Started server process [91988]
+2026-06-04T05:54:07+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:54:07+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:54:16+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/services/scraper.py'. Reloading...
+2026-06-04T05:54:16+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:54:16+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:54:16+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:54:16+0530 INFO    uvicorn.error                  Finished server process [91988]
+2026-06-04T05:54:17+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:54:17+0530 INFO    uvicorn.error                  Started server process [92056]
+2026-06-04T05:54:17+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:54:17+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:54:27+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/services/scraper.py'. Reloading...
+2026-06-04T05:54:27+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:54:27+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:54:27+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:54:27+0530 INFO    uvicorn.error                  Finished server process [92056]
+2026-06-04T05:54:28+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:54:28+0530 INFO    uvicorn.error                  Started server process [92112]
+2026-06-04T05:54:28+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:54:28+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:54:35+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/unified.py'. Reloading...
+2026-06-04T05:54:35+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:54:36+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:54:36+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:54:36+0530 INFO    uvicorn.error                  Finished server process [92112]
+2026-06-04T05:54:37+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:54:38+0530 INFO    uvicorn.error                  Started server process [92156]
+2026-06-04T05:54:38+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:54:38+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T05:55:00+0530 WARNING uvicorn.error                  StatReload detected changes in 'app/section_resolver.py'. Reloading...
+2026-06-04T05:55:00+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T05:55:00+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T05:55:00+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T05:55:00+0530 INFO    uvicorn.error                  Finished server process [92156]
+2026-06-04T05:55:02+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T05:55:02+0530 INFO    uvicorn.error                  Started server process [92312]
+2026-06-04T05:55:02+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T05:55:02+0530 INFO    uvicorn.error                  Application startup complete.
+2026-06-04T09:37:30+0530 WARNING uvicorn.error                  StatReload detected changes in 'scripts/backfill_r2.py'. Reloading...
+2026-06-04T09:37:30+0530 INFO    uvicorn.error                  Shutting down
+2026-06-04T09:37:30+0530 INFO    uvicorn.error                  Waiting for application shutdown.
+2026-06-04T09:37:30+0530 INFO    uvicorn.error                  Application shutdown complete.
+2026-06-04T09:37:30+0530 INFO    uvicorn.error                  Finished server process [92312]
+2026-06-04T09:37:32+0530 INFO    app.logging_setup              logging configured: level=INFO file=(stderr only)
+2026-06-04T09:37:32+0530 INFO    uvicorn.error                  Started server process [95139]
+2026-06-04T09:37:32+0530 INFO    uvicorn.error                  Waiting for application startup.
+2026-06-04T09:37:32+0530 INFO    uvicorn.error                  Application startup complete.

@@ -90,12 +90,12 @@ def extract(
         try:
             with httpx.Client(timeout=timeout) as client:
                 r = client.post(API_URL, headers=headers, json=payload)
-            if r.status_code >= 500:
-                # Server-side error; worth retrying
+            if r.status_code >= 500 or r.status_code == 429:
+                # Server-side error or Rate Limit; worth retrying
                 last_err = FirecrawlError(
-                    f"Firecrawl 5xx: {r.status_code}", status_code=r.status_code, body=r.text[:500]
+                    f"Firecrawl {r.status_code}: {r.text[:500]}", status_code=r.status_code, body=r.text[:500]
                 )
-                time.sleep(1.5 * (attempt + 1))
+                time.sleep(3.0 * (attempt + 1))
                 continue
             if r.status_code >= 400:
                 raise FirecrawlError(
@@ -122,7 +122,7 @@ def extract(
 
         except httpx.RequestError as e:
             last_err = e
-            time.sleep(1.5 * (attempt + 1))
+            time.sleep(3.0 * (attempt + 1))
             continue
         except FirecrawlError:
             raise

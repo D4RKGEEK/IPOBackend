@@ -1,0 +1,84 @@
+# Full IPO pipeline: scrape → find new/updated → resolve → parse
+#                    → subscription → historical price → report
+# Runs every 3 hours via GitHub Actions.
+#
+# Setup (one-time):
+#   GitHub repo → Settings → Secrets and variables → Actions → New repository secret
+#     IPO_API_URL          http://137.184.63.178:8001   (DO droplet, no trailing slash)
+#     INTERNAL_API_KEY     same value as the API's INTERNAL_API_KEY env var
+#
+# Notes:
+#   - Uses the /api/pipeline/auto endpoint (scrape + resolve + parse + subscription + historical + report)
+#   - Report is auto-sent via Telegram by the pipeline itself
+
+name: IPO Pipeline
+
+on:
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      year:
+        description: "Optional year filter (e.g. 2026). Blank = all."
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cron-pipeline
+  cancel-in-progress: false
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run full pipeline
+        env:
+          API_URL: ${{ secrets.IPO_API_URL }}
+          KEY: ${{ secrets.INTERNAL_API_KEY }}
+        run: |
+          set -euo pipefail
+          : "${API_URL:?missing IPO_API_URL secret}"
+          : "${KEY:?missing INTERNAL_API_KEY secret}"
+          API="${API_URL%/}"
+
+          YEAR="${{ github.event.inputs.year }}"
+          url="${API}/api/pipeline/auto"
+          if [ -n "${YEAR:-}" ]; then url="${url}?year=${YEAR}"; fi
+
+          echo "=== POST ${url} ==="
+          resp=$(curl -fsS -m 600 -X POST \
+            -H "X-Internal-Key: ${KEY}" \
+            -H "Content-Type: application/json" \
+            "$url")
+          task_id=$(echo "$resp" | jq -r '.task_id // empty')
+          echo "$resp" | jq .
+
+          if [ -n "$task_id" ]; then
+            echo ""
+            echo "=== Polling task: $task_id ==="
+            for i in $(seq 1 60); do
+              sleep 10
+              task=$(curl -fsS -m 10 "${API}/api/tasks/${task_id}" 2>/dev/null)
+              status=$(echo "$task" | jq -r '.status // "running"')
+              progress=$(echo "$task" | jq -r '.progress // 0')
+              pct=$(echo "$progress * 100" | bc 2>/dev/null || echo "$progress")
+              echo "  [${i}s] status=${status}, progress=${pct}%"
+              if [ "$status" = "completed" ]; then
+                echo ""
+                echo "=== Pipeline complete! ==="
+                echo "$task" | jq '{status, result: {stage, resolved_success, resolved_failed, parsed_success, parsed_failed, total_ipos_checked, new_ipos_found: .result.scrape_result.new_ipos_found, subscription_fetched: .result.subscription.fetched, historical_fetched: .result.historical.fetched}}'
+                exit 0
+              fi
+              if [ "$status" = "failed" ]; then
+                echo "❌ Pipeline failed: $(echo "$task" | jq -r '.error // "unknown"')"
+                exit 1
+              fi
+            done
+            echo "⏰ Timed out waiting for pipeline to complete"
+            exit 1
+          fi
+
+          echo "✅ Pipeline triggered — check Telegram/email for report"

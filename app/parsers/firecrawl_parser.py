@@ -30,8 +30,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
-from app.db_models import get_session
-from app.db_service import DatabaseService
+from app.db.engine import get_session
+from app.db.operations import DatabaseService
 from app.parsers.firecrawl_client import FirecrawlError, extract
 from app.parsers.section_schemas import (
     COMMON_INSTRUCTION,
@@ -70,7 +70,7 @@ def _section_rows_for_ipo(ipo_id: int) -> dict[str, dict]:
     for any section in TARGET_SECTIONS that exists in DB with non-empty raw_md.
     """
     db = DatabaseService()
-    pref = {"drhp": 0, "rhp": 1, "fp": 2}
+    pref = {"fp": 0, "rhp": 1, "drhp": 2}
     best: dict[str, dict] = {}
     for dt in ("drhp", "rhp", "fp"):
         for row in db.get_sections(ipo_id, dt):
@@ -243,7 +243,7 @@ def parse_all_sections_firecrawl(
 
     # Pick up confidence/publish_status that build_unified just wrote
     with get_session() as s:
-        from app.db_models import IPOMaster
+        from app.db.models import IPOMaster
         ipo_row = s.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
         publish_status = ipo_row.publish_status if ipo_row else None
         confidence = ipo_row.confidence_score if ipo_row else None

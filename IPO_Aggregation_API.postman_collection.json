@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "IPO Aggregation API",
-    "description": "IPO Aggregation Platform — list IPOs, filter by documents, resolve PDFs into sections, parse via DeepSeek V4 Flash. All long operations run as background tasks — poll GET /api/tasks/{task_id} for progress.\n\nBase URL: http://127.0.0.1:8001\nDashboard: http://127.0.0.1:8002\nDocs: http://127.0.0.1:8001/docs",
+    "name": "IPO Aggregation API v3",
+    "description": "IPO Aggregation Platform — list IPOs, resolve PDFs into sections, parse via Firecrawl, get unified data. \n\nBase URLs:\n  Local:    http://127.0.0.1:8001\n  Railway:  https://ipobackend-production.up.railway.app\n\nAuth: Write endpoints (resolve, parse-firecrawl, refresh, clear-db) require X-Internal-Key header.\nDocs: https://ipobackend-production.up.railway.app/docs",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -13,24 +13,17 @@
           "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos", "host": ["{{base_url}}"], "path": ["api", "ipos"] } }
         },
         {
-          "name": "Filter: DRHP only",
-          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?documents=drhp", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "documents", "value": "drhp" }] } }
+          "name": "List with Filters",
+          "description": "Filters: documents=drhp,rhp | search=genxai | year=2026 | status=upcoming | publish_status=published | limit=50",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?documents=drhp,rhp&year=2026&limit=20", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "documents", "value": "drhp,rhp" }, { "key": "year", "value": "2026" }, { "key": "limit", "value": "20" }] } }
         },
         {
-          "name": "Filter: Has DRHP + RHP",
-          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?documents=drhp,rhp", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "documents", "value": "drhp,rhp" }] } }
+          "name": "Search by Name",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?search=genxai&documents=any", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "search", "value": "genxai" }, { "key": "documents", "value": "any" }] } }
         },
         {
-          "name": "Filter: Any document",
-          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?documents=any", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "documents", "value": "any" }] } }
-        },
-        {
-          "name": "Search by name",
-          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?search=teamtech&documents=drhp,rhp", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "search", "value": "teamtech" }, { "key": "documents", "value": "drhp,rhp" }] } }
-        },
-        {
-          "name": "Filter by year + status",
-          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?year=2025&status=listed", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "year", "value": "2025" }, { "key": "status", "value": "listed" }] } }
+          "name": "Filter: Published Only",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos?publish_status=published", "host": ["{{base_url}}"], "path": ["api", "ipos"], "query": [{ "key": "publish_status", "value": "published" }] } }
         }
       ]
     },
@@ -39,11 +32,26 @@
       "item": [
         {
           "name": "Get IPO by ID",
-          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88", "host": ["{{base_url}}"], "path": ["api", "ipos", "88"] } }
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954"] } }
         },
         {
           "name": "Get Documents Overview",
-          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/documents", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents"] } }
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/documents", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "documents"] } }
+        }
+      ]
+    },
+    {
+      "name": "Unified Data (Main Contract)",
+      "item": [
+        {
+          "name": "Get Unified Data",
+          "description": "THE endpoint. Returns all extracted fields as flat JSON. 50+ fields: dates, shares, financials, ratios, contacts, fund usage, computed application_lot_table. Values in crores.\n\nFields include: bid_open/close/allotment/listing/refund/credit dates, QIB/NII/Retail/MM/Employee shares, authorized/paid-up/pre/post shares, EPS/NAV/RoNW/ROCE/DebtEq ratios, registrar/BRLM contacts, fund usage breakdown, application lot table.",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/unified", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "unified"] } }
+        },
+        {
+          "name": "Get Unified (Alias)",
+          "description": "Alias for /unified. Kept for backwards compatibility.",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/parsed-all", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "parsed-all"] } }
         }
       ]
     },
@@ -52,44 +60,75 @@
       "item": [
         {
           "name": "Resolve Documents (Background)",
-          "description": "Downloads PDFs, finds section headers, extracts text. Returns task_id. Poll GET /api/tasks/{task_id} for progress.",
-          "request": { "method": "POST", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/resolve", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "resolve"] } }
+          "description": "Downloads RHP/DRHP PDF, detects sections by header matching (25+ variants), extracts each section's text using pymupdf, saves raw_md to DB + R2.\n\nReturns task_id. Poll GET /api/tasks/{task_id} for progress. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/ipos/4954/resolve?stream=true", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "resolve"], "query": [{"key": "stream", "value": "true"}] } }
         },
         {
-          "name": "List Sections (DRHP)",
-          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/documents/drhp/sections", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents", "drhp", "sections"] } }
-        },
-        {
-          "name": "View Section Raw Text",
-          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/documents/drhp/sections/CAPITAL_STRUCTURE", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents", "drhp", "sections", "CAPITAL_STRUCTURE"] } }
-        },
-        {
-          "name": "View Section Raw (Plain Text)",
-          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/documents/drhp/sections/CAPITAL_STRUCTURE?raw=true", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents", "drhp", "sections", "CAPITAL_STRUCTURE"], "query": [{ "key": "raw", "value": "true" }] } }
+          "name": "Resolve All Pending",
+          "description": "Batch resolves all IPOs that have documents not yet resolved. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/ipos/resolve-all-pending", "host": ["{{base_url}}"], "path": ["api", "ipos", "resolve-all-pending"] } }
         },
         {
           "name": "List Sections (RHP)",
-          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/documents/rhp/sections", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "documents", "rhp", "sections"] } }
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/documents/rhp/sections", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "documents", "rhp", "sections"] } }
+        },
+        {
+          "name": "View Section Raw Text",
+          "description": "Returns raw markdown text for a specific section (includes pdfplumber-extracted tables as pipe syntax).",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/documents/rhp/sections/CAPITAL_STRUCTURE", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "documents", "rhp", "sections", "CAPITAL_STRUCTURE"] } }
+        },
+        {
+          "name": "View Section Parsed Data",
+          "description": "Returns parsed (firecrawl) data for a specific section.",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/documents/rhp/sections/CAPITAL_STRUCTURE/parsed", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "documents", "rhp", "sections", "CAPITAL_STRUCTURE", "parsed"] } }
+        },
+        {
+          "name": "List Sections (DRHP)",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/documents/drhp/sections", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "documents", "drhp", "sections"] } }
         }
       ]
     },
     {
-      "name": "DeepSeek Parsing",
+      "name": "Firecrawl Parsing",
       "item": [
         {
-          "name": "Parse All Sections (2 calls, Background)",
-          "description": "2 DeepSeek V4 Flash calls (non-financial + financial). Returns unified JSON with all 60+ fields. Returns task_id — poll for result. Includes _raw_prompt and _raw_response for debugging.",
-          "request": { "method": "POST", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/parse-sections", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "parse-sections"] } }
+          "name": "Parse with Firecrawl",
+          "description": "Sends section raw_md to Firecrawl LLM with JSON schema. Returns structured field data per section. Builds unified_data automatically. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/ipos/4954/parse-firecrawl", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "parse-firecrawl"] } }
         },
         {
-          "name": "Parse with Force (Re-parse)",
-          "description": "Re-parse even if already done. Use after re-resolving documents.",
-          "request": { "method": "POST", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/parse-sections?force=true", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "parse-sections"], "query": [{ "key": "force", "value": "true" }] } }
+          "name": "Parse Firecrawl (Force Re-parse)",
+          "description": "Force re-parse even if hashes match. Use after schema changes or resolve updates. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/ipos/4954/parse-firecrawl?force=true", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "parse-firecrawl"], "query": [{ "key": "force", "value": "true" }] } }
         },
         {
-          "name": "Get All Parsed Data (Unified JSON)",
-          "description": "Returns ALL extracted fields in one JSON. Every field present. Includes _raw_prompt, _raw_response, _sections_input for debugging. Recommended endpoint for consuming parsed data.",
-          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/88/parsed-all", "host": ["{{base_url}}"], "path": ["api", "ipos", "88", "parsed-all"] } }
+          "name": "Parse Sections (Alternative)",
+          "description": "Alternative parsing endpoint. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/ipos/4954/parse-sections", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "parse-sections"] } }
+        }
+      ]
+    },
+    {
+      "name": "Tables API",
+      "item": [
+        {
+          "name": "Get All Tables",
+          "description": "Returns all tables extracted during resolve, in structured JSON format (headers + rows per table). Tables are cleaned: empty columns removed, shifted column pairs merged.",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/tables", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "tables"] } }
+        },
+        {
+          "name": "Tables by Section",
+          "description": "Filter tables by section name (auto-resolves page range from resolve step).",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/tables?section_name=GENERAL_INFORMATION", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "tables"], "query": [{ "key": "section_name", "value": "GENERAL_INFORMATION" }] } }
+        },
+        {
+          "name": "Tables by Page (RAM Safe)",
+          "description": "Extract tables from a single page only. Safe on 500MB RAM Railway containers.",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/tables?page_num=73", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "tables"], "query": [{ "key": "page_num", "value": "73" }] } }
+        },
+        {
+          "name": "Tables by Section + Doc Type",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/tables?doc_type=rhp&section_name=CAPITAL_STRUCTURE", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "tables"], "query": [{ "key": "doc_type", "value": "rhp" }, { "key": "section_name", "value": "CAPITAL_STRUCTURE" }] } }
         }
       ]
     },
@@ -114,27 +153,53 @@
           "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] } }
         },
         {
-          "name": "Trigger Scrape (Background)",
-          "description": "Full re-scrape from SEBI, BSE, NSE, BSE SME. Returns task_id. Poll GET /api/tasks/{task_id} for progress showing source counts + DB save progress.",
-          "request": { "method": "POST", "header": [], "url": { "raw": "{{base_url}}/api/refresh", "host": ["{{base_url}}"], "path": ["api", "refresh"] } }
-        },
-        {
-          "name": "Scrape by Year",
-          "description": "Only saves IPOs filed in 2026.",
-          "request": { "method": "POST", "header": [], "url": { "raw": "{{base_url}}/api/refresh?year=2026", "host": ["{{base_url}}"], "path": ["api", "refresh"], "query": [{ "key": "year", "value": "2026" }] } }
+          "name": "Review Queue",
+          "description": "List IPOs pending review.",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/review-queue", "host": ["{{base_url}}"], "path": ["api", "review-queue"] } }
         },
         {
           "name": "Dashboard Stats",
           "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/dashboard/stats", "host": ["{{base_url}}"], "path": ["api", "dashboard", "stats"] } }
         },
         {
+          "name": "Dashboard Logs",
+          "description": "Recent scraper logs.",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/dashboard/logs?limit=20", "host": ["{{base_url}}"], "path": ["api", "dashboard", "logs"], "query": [{ "key": "limit", "value": "20" }] } }
+        },
+        {
           "name": "Status Changes",
           "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/status-changes?limit=20", "host": ["{{base_url}}"], "path": ["api", "status-changes"], "query": [{ "key": "limit", "value": "20" }] } }
+        },
+        {
+          "name": "Trigger Scrape (Background)",
+          "description": "Full re-scrape from Upstox. Use sources=all for Upstox + legacy SEBI/BSE/NSE. Returns task_id. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/refresh", "host": ["{{base_url}}"], "path": ["api", "refresh"] } }
+        },
+        {
+          "name": "Scrape by Year",
+          "description": "Only saves IPOs filed in 2026. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/refresh?year=2026", "host": ["{{base_url}}"], "path": ["api", "refresh"], "query": [{ "key": "year", "value": "2026" }] } }
+        },
+        {
+          "name": "Master Pipeline (Auto)",
+          "description": "Runs the full Scrape -> Resolve -> Parse pipeline automatically in the background. Memory optimized and handles stream=true.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/pipeline/auto?year=2026&stream=true", "host": ["{{base_url}}"], "path": ["api", "pipeline", "auto"], "query": [{ "key": "year", "value": "2026" }, { "key": "stream", "value": "true" }] } }
+        },
+        {
+          "name": "Scrape All Sources",
+          "description": "Scrape from Upstox + legacy SEBI/BSE/NSE. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/refresh?sources=all", "host": ["{{base_url}}"], "path": ["api", "refresh"], "query": [{ "key": "sources", "value": "all" }] } }
+        },
+        {
+          "name": "Clear Database",
+          "description": "⚠️ DANGER: Deletes ALL IPOs and parsed data. Requires ?confirm=yes + X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/clear-db?confirm=yes", "host": ["{{base_url}}"], "path": ["api", "clear-db"], "query": [{ "key": "confirm", "value": "yes" }] } }
         }
       ]
     }
   ],
   "variable": [
-    { "key": "base_url", "value": "http://127.0.0.1:8001", "type": "string" }
+    { "key": "base_url", "value": "https://ipobackend-production.up.railway.app", "type": "string" },
+    { "key": "internal_key", "value": "bc13ad...0d34", "type": "string" }
   ]
 }
