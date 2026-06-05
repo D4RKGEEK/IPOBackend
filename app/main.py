@@ -1197,6 +1197,55 @@ async def refresh_all_subscriptions(_auth: None = Depends(_require_internal_key)
     return {"status": "ok", **result}
 
 
+# ─── Historical Price Data ───────────────────────────────
+@app.post("/api/ipos/{ipo_id}/historical", tags=["Aggregation"],
+    summary="Fetch historical candle data for an IPO via Upstox API",
+    description="Fetches daily O/H/L/C/volume via ISIN. Upserts in ipo_historical_prices table.")
+async def fetch_historical(ipo_id: int = Path(...), _auth: None = Depends(_require_internal_key)):
+    from app.historical_data.service import fetch_and_store
+    result = await fetch_and_store(ipo_id)
+    if not result:
+        raise HTTPException(404, "No historical data available (need ISIN + valid Upstox token)")
+    return {"ipo_id": ipo_id, "data": result}
+
+
+@app.post("/api/historical/refresh", tags=["Aggregation"],
+    summary="Refresh historical prices for all open/closed/listed IPOs",
+    description="Fetches candle data for every eligible IPO. Daily cron target.")
+async def refresh_all_historical(_auth: None = Depends(_require_internal_key)):
+    from app.historical_data.service import fetch_all_open
+    result = await fetch_all_open()
+    return {"status": "ok", **result}
+
+
+@app.get("/api/ipos/{ipo_id}/historical", tags=["Aggregation"],
+    summary="Get stored historical price data for an IPO",
+    description="Returns the latest candle summary + full candle array for charting.")
+async def get_historical(ipo_id: int = Path(...)):
+    from app.db.engine import get_session
+    from app.db.models import IPOHistoricalPrice
+    with get_session() as s:
+        rec = s.query(IPOHistoricalPrice).filter(
+            IPOHistoricalPrice.ipo_master_id == ipo_id
+        ).first()
+    if not rec:
+        raise HTTPException(404, "No historical data found. Run POST /api/ipos/{id}/historical first.")
+    return {
+        "ipo_id": rec.ipo_master_id,
+        "isin": rec.isin,
+        "exchange_type": rec.exchange_type,
+        "fetch_date": rec.fetch_date,
+        "last_updated": rec.last_updated.isoformat() if rec.last_updated else None,
+        "summary": {
+            "open": rec.open, "high": rec.high, "low": rec.low, "close": rec.close,
+            "volume": rec.volume, "prev_close": rec.prev_close,
+            "change_pct": rec.change_pct, "color": rec.color,
+            "num_candles": rec.num_candles,
+        },
+        "candles": rec.candles or [],
+    }
+
+
 # ─── Status Changes ────────────────────────────────────────
 @app.get("/api/status-changes", response_model=list[StatusChangeItem], tags=["Aggregation"])
 async def get_status_changes(limit: int = Query(50, ge=1, le=200)):

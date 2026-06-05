@@ -243,3 +243,38 @@ class ScraperLog(Base):
     new_ipos_found: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status_changes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class IPOHistoricalPrice(Base):
+    """Daily historical candle data for listed IPOs — one row per IPO, upserted daily."""
+    __tablename__ = "ipo_historical_prices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ipo_master_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("ipo_master.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+
+    # Source identification
+    isin: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    exchange_type: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # NSE_EQ | BSE_EQ
+
+    # Summary — most recent candle snapshot
+    open: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    low: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    volume: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    prev_close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    change_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    color: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 1=bullish, -1=bearish, 0=flat
+    num_candles: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Full candle array for charting
+    candles: Mapped[Optional[list]] = mapped_column(SaJSON, nullable=True)
+
+    # Metadata
+    fetch_date: Mapped[str] = mapped_column(String(20), nullable=False)  # YYYY-MM-DD of latest candle
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_updated: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    # Relationship
+    ipo = relationship("IPOMaster", backref="historical_price", uselist=False)
