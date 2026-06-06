@@ -1294,6 +1294,169 @@ async def get_historical(ipo_id: int = Path(...)):
     }
 
 
+# ─── V2 API — Consolidated Endpoints ───────────────────────
+@app.get("/api/v2/ipos", tags=["V2"],
+    summary="IPO Metadata — lightweight list with basic info",
+    description="Returns all IPOs with: id, name, status, dates, price_band, "
+                "platform, issue_type, symbol, gmp, subscription, published. "
+                "Cached for 60s. Lightweight SQL — skips heavy JSON columns.")
+async def v2_list_ipos(
+    status: str = Query("all"), platform: str = Query("all"),
+    search: str = Query(""), year: Optional[int] = Query(None),
+    page: int = Query(1, ge=1), per_page: int = Query(25, ge=1, le=100),
+):
+    global _ipos_cache
+    cache_key = f"v2_{status}_{platform}_{search}_{year}_{page}_{per_page}"
+    now = _time.time()
+    if cache_key in _ipos_cache and now < _ipos_cache[cache_key]["expires"]:
+        ipos, total = _ipos_cache[cache_key]["data"]
+    else:
+        # Lightweight SQL — only select the columns we need
+        from app.db.engine import get_session
+        from sqlalchemy import text
+        conditions = ["1=1"]
+        params = {}
+        if status and status != "all":
+            conditions.append("status = :status")
+            params["status"] = status
+        if year:
+            conditions.append("(open_date LIKE :year OR drhp_filed_date LIKE :year)")
+            params["year"] = f"{year}%"
+        if platform and platform != "all":
+            conditions.append("platform = :platform")
+            params["platform"] = platform
+        if search:
+            conditions.append("company_name ILIKE :search")
+            params["search"] = f"%{search}%"
+        where = " AND ".join(conditions)
+
+        with get_session() as s:
+            cnt = s.execute(text(f"SELECT COUNT(*) FROM ipo_master WHERE {where}"), params).scalar()
+            rows = s.execute(text(f"""
+                SELECT id, company_name, status, drhp_filed_date, rhp_filed_date,
+                       fp_filed_date, open_date, close_date, price_band, platform,
+                       issue_type, publish_status, confidence_score,
+                       drhp_url, rhp_url, final_prospectus_url,
+                       upstox_data, gmp_latest, subscription_latest
+                FROM ipo_master
+                WHERE {where}
+                ORDER BY id DESC
+                LIMIT :limit OFFSET :offset
+            """), {**params, "limit": per_page, "offset": (page - 1) * per_page}).fetchall()
+
+        ipos = [dict(r._mapping) for r in rows]
+        total = cnt
+        _ipos_cache[cache_key] = {"expires": now + 60, "data": (ipos, total)}
+
+    data = []
+    for d in ipos:
+        upstox_raw = d.get("upstox_data") or {}
+        gmp_raw = d.get("gmp_latest") or {}
+        sub_raw = d.get("subscription_latest") or {}
+        data.append({
+            "id": d.get("id"),
+            "company_name": d.get("company_name"),
+            "status": d.get("status"),
+            "published": d.get("publish_status") == "published",
+            "dates": {
+                "drhp_filed": d.get("drhp_filed_date"),
+                "rhp_filed": d.get("rhp_filed_date"),
+                "fp_filed": d.get("fp_filed_date"),
+                "open": d.get("open_date"),
+                "close": d.get("close_date"),
+            },
+            "price_band": d.get("price_band"),
+            "platform": d.get("platform"),
+            "issue_type": d.get("issue_type"),
+            "symbol": upstox_raw.get("symbol") if isinstance(upstox_raw, dict) else None,
+            "gmp": gmp_raw.get("gmp") if isinstance(gmp_raw, dict) else None,
+            "subscription": {
+                "total": sub_raw.get("total"),
+                "qib": sub_raw.get("qib"),
+                "nii": sub_raw.get("nii"),
+                "retail": sub_raw.get("retail"),
+            } if isinstance(sub_raw, dict) else None,
+        })
+    return {
+        "data": data,
+        "pagination": {
+            "total_records": total,
+            "current_page": page,
+            "per_page": per_page,
+            "total_pages": max(1, ceil(total / per_page)) if total else 1,
+        },
+    }
+
+
+@app.get("/api/v2/ipos/{ipo_id}", tags=["V2"],
+    summary="IPO Detail — everything for one IPO in one call",
+    description="Returns parsed data + GMP + subscription + historical "
+                "candles for a single IPO. Reads JSON columns directly — "
+                "no computation, minimal DB load.")
+async def v2_get_ipo(ipo_id: int = Path(...)):
+    from app.db.engine import get_session
+    from app.db.models import IPOMaster, IPOHistoricalPrice
+
+    ipo = db_service.get_ipo_by_id(ipo_id)
+    if not ipo:
+        raise HTTPException(status_code=404, detail="IPO not found")
+
+    d = ipo.to_dict() if hasattr(ipo, "to_dict") else {}
+    upstox_raw = d.get("upstox_data") or {}
+
+    # Historical candles — single indexed query, O(1)
+    historical = None
+    with get_session() as s:
+        hp = s.query(IPOHistoricalPrice).filter(
+            IPOHistoricalPrice.ipo_master_id == ipo_id
+        ).first()
+        if hp:
+            historical = {
+                "isin": hp.isin,
+                "exchange_type": hp.exchange_type,
+                "fetch_date": hp.fetch_date,
+                "last_updated": hp.last_updated.isoformat() if hp.last_updated else None,
+                "summary": {
+                    "open": hp.open, "high": hp.high, "low": hp.low,
+                    "close": hp.close, "volume": hp.volume,
+                    "prev_close": hp.prev_close, "change_pct": hp.change_pct,
+                    "num_candles": hp.num_candles,
+                },
+                "candles": hp.candles or [],
+            }
+
+    return {
+        "id": ipo.id,
+        "company_name": ipo.company_name,
+        "status": ipo.status,
+        "published": ipo.publish_status == "published",
+        "publish_status": ipo.publish_status,
+        "confidence_score": ipo.confidence_score,
+        "dates": {
+            "drhp_filed": ipo.drhp_filed_date,
+            "rhp_filed": ipo.rhp_filed_date,
+            "fp_filed": ipo.fp_filed_date,
+            "open": ipo.open_date,
+            "close": ipo.close_date,
+        },
+        "price_band": ipo.price_band,
+        "platform": ipo.platform,
+        "issue_type": ipo.issue_type,
+        "symbol": upstox_raw.get("symbol") if isinstance(upstox_raw, dict) else None,
+        "documents": {
+            "drhp": ipo.drhp_url,
+            "rhp": ipo.rhp_url,
+            "final_prospectus": ipo.final_prospectus_url,
+        },
+        "parsed_data": ipo.unified_data,
+        "provenance": ipo.unified_provenance,
+        "validation_issues": ipo.validation_issues or [],
+        "gmp": ipo.gmp_latest,
+        "subscription": ipo.subscription_latest,
+        "historical": historical,
+    }
+
+
 # ─── GMP Data ──────────────────────────────────────────────
 @app.post("/api/gmp/refresh", tags=["Aggregation"],
     summary="Refresh GMP data from Chittorgarh/Investorgain",
