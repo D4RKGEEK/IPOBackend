@@ -686,9 +686,10 @@ async def resolve_ipo_documents(ipo_id: int = Path(...), stream: bool = Query(Fa
                             r = await resolve_document(ipo_id, dk, url, db_service, client, stream_download=stream)
                             if r.get("status") == "ok":
                                 break
-                            if r.get("status") == "abridged_detected":
+                            if r.get("status") in ("abridged_detected", "not_a_prospectus"):
                                 abridged_count += 1
-                                logger.info("resolve %s/%s abridged doc at %s — trying next", ipo_id, dt, url[:60])
+                                logger.info("resolve %s/%s %s at %s — trying next",
+                                            ipo_id, dt, r.get("status"), url[:60])
                                 continue
                             logger.warning("resolve %s/%s failed url=%s err=%s — trying next source",
                                            ipo_id, dt, url[:80], r.get("error", ""))

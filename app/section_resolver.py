@@ -490,6 +490,36 @@ def _extract_tables_worker(pdf_path: str, page_nums) -> list:
     return results
 
 
+def _guess_non_prospectus_reason(page_count: int, first_page_text: str) -> str:
+    """Given few pages + first-page text, guess what the document actually is.
+
+    Returns a short human-readable reason string like 'Corrigendum notice'
+    or 'HTML page served as PDF'.
+    """
+    if page_count == 1 and not first_page_text:
+        return "empty_or_non_pdf"
+    u = first_page_text.upper()
+    if "CORRIGENDUM" in u:
+        # Usually 1-2 page corrigendum to an existing DRHP/RHP
+        return "corrigendum_notice"
+    if "ADDENDUM" in u:
+        return "addendum_notice"
+    if "NOTICE" in u and ("PUBLIC ISSUE" in u or "IPO" in u):
+        return "public_notice"
+    if "NSE" in u and ("CORRIGENDUM" in u or "NOTICE" in u):
+        # NSE HTML filing pages
+        return "nse_filing_page"
+    if "SEBI" in u:
+        # SEBI HTML filing/approval pages
+        if "CORRIGENDUM" in u: return "sebi_corrigendum"
+        return "sebi_filing_page"
+    if "PAGE NOT FOUND" in u or "404" in u:
+        return "page_not_found"
+    if "<HTML" in u or "<!DOCTYPE" in u or "HTTP" in u:
+        return "html_served_as_pdf"
+    return f"too_few_pages_{page_count}"
+
+
 async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, client: httpx.AsyncClient, stream_download: bool = False) -> dict:
     from app.notifications import notify
     import gc
@@ -537,9 +567,23 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
         import pymupdf as _pm
         with _pm.open(tmp_path) as _pd:
             total_pages = _pd.page_count
+
+            # Gate: too few pages → not a real prospectus document.
+            # Common false positives: HTML pages served as "PDF" (SEBI filings),
+            # corrigenda/addenda (1-2 page notices), mislabeled forms.
+            if total_pages < 3:
+                p0_text = _pd[0].get_text("text").upper().strip() if total_pages > 0 else ""
+                reason = _guess_non_prospectus_reason(total_pages, p0_text)
+                logger.warning(
+                    "resolve %s/%s: not a valid prospectus (%s) — %d pages. url=%s",
+                    ipo_id, doc_type, reason, total_pages, url[:80],
+                )
+                return {"status": "not_a_prospectus", "doc_type": doc_type,
+                        "total_pages": total_pages, "reason": reason,
+                        "message": f"Document appears to be {reason} ({total_pages} pages) — not a full DRHP/RHP"}
+
             # Detect Draft Abridged Prospectuses (DAP) — NSE sometimes mislabels them as DRHP.
-            # A DAP is < 20 pages and says "ABRIDGED" on the first page. They don't have the
-            # standard section structure, so processing them produces confidence = 0.0.
+            # A DAP is < 20 pages and says "ABRIDGED" on the first page.
             if total_pages < 20 and _pd.page_count > 0:
                 p0 = _pd[0].get_text("text").upper()
                 if "ABRIDGED" in p0 or "DRAFT ABRIDGED" in p0:
