@@ -53,7 +53,7 @@ KNOWN_SECTIONS = [
     "OUTSTANDING LITIGATION AND MATERIAL DEVELOPMENTS",
     "OUTSTANDING LITIGATIONS AND MATERIAL DEVELOPMENTS",
     "OUTSTANDING LITIGATION AND OTHER MATERIAL DEVELOPMENTS",
-    "ISSUE PROCEDURE", "ISSUE STRUCTURE", "TERMS OF THE ISSUE", "TERMS OF THE OFFER",
+    "ISSUE PROCEDURE", "ISSUE STRUCTURE", "OFFER STRUCTURE", "TERMS OF THE ISSUE", "TERMS OF THE OFFER",
     "OUR GROUP COMPANIES", "OUR GROUP COMPANY",
     "KEY REGULATIONS AND POLICIES", "KEY INDUSTRY REGULATIONS AND POLICIES",
     "KEY INDUSTRY REGULATIONS",
@@ -217,11 +217,12 @@ def _find_sections_in_doc(pdf_path: str, total_pages: int) -> list[dict]:
     import pymupdf
     import gc
     # Pages with no section found beyond this gap → stop scanning.
-    # 50 pages is conservative: financial statement sections can be 30-40 pages
-    # of pure tables with no headers, so 50 gives safe headroom.
+    # 500 pages covers extreme cases like Hexagon Nutrition RHP where
+    # INDUSTRY_OVERVIEW (p210) → OFFER_STRUCTURE (p577) = 367-page gap.
+    # 50 was too conservative for 600+ page docs with sparse headers.
     # Guard: only apply once we've found at least 5 sections (avoids early exit
     # on unusual short/sparsely-structured docs).
-    _GAP_LIMIT = 50
+    _GAP_LIMIT = 500
     _MIN_SECTIONS_BEFORE_EXIT = 5
 
     doc = pymupdf.open(pdf_path)

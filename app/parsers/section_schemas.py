@@ -31,7 +31,8 @@ COMMON_INSTRUCTION = (
     "You are extracting structured data from one section of an Indian IPO prospectus "
     "(DRHP / RHP / Final Prospectus). Return ONLY the requested JSON fields. "
     "Use empty string \"\" for missing text and [] for missing arrays. Never return null. "
-    "Preserve units (e.g. 'Rs. 1,234 crore', '12.45%') in their original form."
+    "Preserve units (e.g. 'Rs. 1,234 crore', '12.45%') in their original form. "
+    "For PIPE-SEPARATED financial fields, output: 'Period Label: amount | Period Label: amount'. Example: total_revenue: 'Dec 31, 2025: 2675.87 | Mar 31, 2025: 3249.29'. Include ALL periods."
 )
 
 
@@ -171,9 +172,9 @@ SECTION_SCHEMAS: dict[str, dict[str, Any]] = {
             "offer_for_sale_shares": {"type": "string", "description": "Number of equity shares in the offer-for-sale (OFS) portion."},
             "total_issue_shares": {"type": "string", "description": "Total number of equity shares offered in the Issue."},
             "total_issue_amount": {"type": "string", "description": "Total issue size in rupees (e.g. 'Rs. 55 crore')."},
-            "qib_percent": {"type": "string", "description": "QIB portion as percentage of net issue."},
-            "nii_percent": {"type": "string", "description": "NII/HNI portion as percentage of net issue."},
-            "retail_percent": {"type": "string", "description": "Retail portion as percentage of net issue."},
+            "qib_percent": {"type": "string", "description": "QIB portion as percentage of net issue. e.g. '50%', 'not more than 50%', '50.00%'. Extract even if preceded by 'not more than' / 'not less than' qualifiers."},
+            "nii_percent": {"type": "string", "description": "NII/HNI portion as percentage of net issue. e.g. '15%', 'not less than 15%'. Extract even if preceded by 'not more than' / 'not less than' qualifiers."},
+            "retail_percent": {"type": "string", "description": "Retail portion as percentage of net issue. e.g. '35%', 'not more than 35%'. Extract even if preceded by 'not more than' / 'not less than' qualifiers."},
         },
     },
 
@@ -226,14 +227,14 @@ SECTION_SCHEMAS: dict[str, dict[str, Any]] = {
                 "items": {"type": "string"},
                 "description": "List of fiscal periods covered, e.g. ['Dec 31, 2025', 'Mar 31, 2025', 'Mar 31, 2024', 'Mar 31, 2023'].",
             },
-            "total_revenue": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Total revenue / revenue from operations per period. Key = period label, value = amount. Example: {'31-Dec-2025': '6,447.28 lakhs', '31-Mar-2025': '2,853.18 lakhs'}."},
-            "total_income": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Total income (revenue + other income) per period. Key = period label, value = amount."},
-            "profit_after_tax": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Profit after tax per period. Key = period label, value = amount."},
-            "ebitda": {"type": "object", "additionalProperties": {"type": "string"}, "description": "EBITDA per period. Key = period label, value = amount."},
-            "total_assets": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Total assets per period. Key = period label, value = amount."},
-            "net_worth": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Net worth / total equity per period. Key = period label, value = amount."},
-            "reserves_and_surplus": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Reserves and surplus per period. Key = period label, value = amount."},
-            "total_borrowings": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Total borrowings (short + long-term) per period. Key = period label, value = amount."},
+            "total_revenue": {"type": "string", "description": "Revenue from Operations per period. Output as pipe-separated: e.g. 'Dec 31, 2025: 2675.87 | Mar 31, 2025: 3249.29 | Mar 31, 2024: 2977.31 | Mar 31, 2023: 2785.01'. Include amount WITHOUT commas. Look for 'Revenue from Operations' row in P&L."},
+            "total_income": {"type": "string", "description": "Total Income per period. Output as pipe-separated: e.g. 'Dec 31, 2025: 2755.70 | Mar 31, 2025: 3312.87'. Look for 'Total Income' row."},
+            "profit_after_tax": {"type": "string", "description": "Profit After Tax per period. Output as pipe-separated. Look for 'Profit for the Year' or 'Profit After Tax' row in P&L."},
+            "ebitda": {"type": "string", "description": "EBITDA per period. Output as pipe-separated. Look for EBITDA row or compute from Profit Before Tax + Depreciation + Finance Costs."},
+            "total_assets": {"type": "string", "description": "Total Assets per period. Output as pipe-separated: e.g. 'Dec 31, 2025: 3276.01'. Look for 'Total Assets' row in Balance Sheet."},
+            "net_worth": {"type": "string", "description": "Net Worth / Total Equity per period. Output as pipe-separated. Look for 'Total Equity' row."},
+            "reserves_and_surplus": {"type": "string", "description": "Reserves and Surplus / Other Equity per period. Output as pipe-separated. Look for 'Other Equity' row."},
+            "total_borrowings": {"type": "string", "description": "Total Borrowings per period. Output as pipe-separated. Sum long-term + short-term Borrowings."},
         },
     },
 
@@ -303,6 +304,7 @@ SECTION_ALIASES: dict[str, str] = {
     "OUR_HISTORY_AND_CORPORATE_STRUCTURE":        "HISTORY_AND_CERTAIN_CORPORATE_MATTERS",
     "OUR_HISTORY_AND_CERTAIN_CORPORATE_MATTERS":  "HISTORY_AND_CERTAIN_CORPORATE_MATTERS",
     "OBJECT_OF_THE_ISSUE":                        "OBJECTS_OF_THE_ISSUE",
+    "OFFER_STRUCTURE":                            "ISSUE_STRUCTURE",
 }
 
 
@@ -335,9 +337,10 @@ TARGET_SECTIONS = list(SECTION_SCHEMAS.keys())
 
 SECTION_GROUPS: dict[str, list[str]] = {
     "company":   ["GENERAL_INFORMATION", "OUR_PROMOTERS_AND_PROMOTER_GROUP"],
-    "structure": ["CAPITAL_STRUCTURE", "OBJECTS_OF_THE_OFFER", "ISSUE_STRUCTURE"],
+    "structure": ["CAPITAL_STRUCTURE", "OBJECTS_OF_THE_OFFER"],
     "financial": ["RESTATED_FINANCIAL_STATEMENTS", "BASIS_FOR_OFFER_PRICE"],
     "issue":     ["ISSUE_PROCEDURE"],
+    "offer":     ["ISSUE_STRUCTURE"],
 }
 
 

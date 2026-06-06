@@ -115,13 +115,15 @@ def _compute_application_lot_table(unified: dict, ipo: IPOMaster) -> Optional[li
     lot_value = lot_size * max_price
 
     # Thresholds from SEBI / standard IPO rules
-    RETAIL_MIN_AMOUNT = 200000       # ₹2,00,000
+    RETAIL_MIN_AMOUNT = 15000        # Min 1 lot threshold
     SHNI_MAX_AMOUNT = 1000000        # ₹10,00,000
     EMPLOYEE_MAX_AMOUNT = 500000     # ₹5,00,000 (standard employee cap)
 
-    # Retail: min 2 lots (to reach ₹2L), max 2 lots (retail capped at ₹2L)
-    retail_min_lots = max(2, -(-RETAIL_MIN_AMOUNT // int(lot_value)))  # ceil division
-    retail_max_lots = retail_min_lots  # retail is fixed at min application
+    # Retail: min 1 lot, max up to ₹2L (200,000)
+    retail_min_lots = 1
+    retail_max_lots = max(1, int(200000 / lot_value))
+    if retail_max_lots < 1:
+        retail_max_lots = 1
 
     # S-HNI: above retail max lots up to ₹10L
     shni_min_lots = retail_max_lots + 1
@@ -164,14 +166,26 @@ _AMOUNT_FIELDS = {
 
 
 def _lakhs_to_crores(value: Any) -> Any:
-    """Convert a lakh-denominated string/dict to crores. Non-amount values pass through."""
+    """Convert a lakh/million-denominated string to crores."""
     if isinstance(value, dict):
         return {k: _lakhs_to_crores(v) for k, v in value.items()}
     if not isinstance(value, str):
         return value
+    # Try millions first
+    m = re.match(r'^[₹Rs.]*\s*([\d,]+\.?\d*)\s*(million|millions|mn|Mn|M)\\b', value.strip(), re.IGNORECASE)
+    if m:
+        try:
+            num = float(m.group(1).replace(",", ""))
+        except ValueError:
+            return value
+        crore_val = num / 10
+        prefix = "₹" if value.strip().startswith(("₹", "R", "r")) else ""
+        if crore_val == int(crore_val):
+            return f"{prefix}{int(crore_val):,} crore"
+        return f"{prefix}{crore_val:,.2f} crore"
+    # Try lakhs
     m = re.match(r'^[₹Rs.]*\s*([\d,]+\.?\d*)\s*(lakhs?|Lakhs?)', value.strip())
     if not m:
-        # Try embedded pattern for fund_usage_breakdown items
         m = re.search(r'[₹Rs.]+\s*([\d,]+\.?\d*)\s*(lakhs?|Lakhs?)', value)
     if not m:
         return value
@@ -183,24 +197,176 @@ def _lakhs_to_crores(value: Any) -> Any:
     if not is_lakh:
         return value
     crore_val = num / 100
-    if m.group(0).startswith("₹"):
-        prefix = "₹"
-    else:
-        prefix = "₹"
+    prefix = "₹" if m.group(0).startswith("₹") else "₹"
     if crore_val == int(crore_val):
         return value[:m.start()] + f"{prefix}{int(crore_val):,} crore" + value[m.end():]
     return value[:m.start()] + f"{prefix}{crore_val:,.2f} crore" + value[m.end():]
 
 
+def _millions_to_crores(value: Any) -> Any:
+    """Alias for _lakhs_to_crores (handles both patterns)."""
+    return _lakhs_to_crores(value)
+
+
 def _normalize_amounts(unified: dict) -> None:
-    """Convert lakh-denominated fields to crores in-place."""
+    """Convert lakh/million-denominated fields to crores in-place."""
     for field in _AMOUNT_FIELDS:
         if field in unified:
-            unified[field] = _lakhs_to_crores(unified[field])
+            unified[field] = _millions_to_crores(unified[field])
     if "fund_usage_breakdown" in unified and isinstance(unified["fund_usage_breakdown"], list):
         unified["fund_usage_breakdown"] = [
-            _lakhs_to_crores(item) for item in unified["fund_usage_breakdown"]
+            _millions_to_crores(item) for item in unified["fund_usage_breakdown"]
         ]
+
+
+
+def _enrich_from_sources(unified: dict, ipo) -> dict:
+    """Enrich unified dict with data from BSE/Upstox/GMP/subscription sources."""
+    import json
+    
+    if "price_band" not in unified or not unified.get("price_band"):
+        upstox = ipo.upstox_data
+        if isinstance(upstox, str):
+            try: upstox = json.loads(upstox)
+            except Exception: upstox = {}
+        if upstox:
+            min_p = upstox.get("minimum_price") or upstox.get("min_price")
+            max_p = upstox.get("maximum_price") or upstox.get("max_price")
+            if min_p and max_p:
+                unified["price_band"] = f"{min_p}-{max_p}"
+            elif max_p:
+                unified["price_band"] = str(max_p)
+        elif ipo.price_band:
+            unified["price_band"] = str(ipo.price_band)
+    
+    if "lot_size" not in unified or not unified.get("lot_size"):
+        upstox = ipo.upstox_data
+        if isinstance(upstox, str):
+            try: upstox = json.loads(upstox)
+            except Exception: upstox = {}
+        if upstox and upstox.get("lot_size"):
+            unified["lot_size"] = str(upstox["lot_size"])
+        else:
+            gmp = ipo.gmp_latest
+            if isinstance(gmp, str):
+                try: gmp = json.loads(gmp)
+                except Exception: gmp = {}
+            if gmp and gmp.get("lot_size"):
+                unified["lot_size"] = str(gmp["lot_size"])
+    
+    upstox = ipo.upstox_data
+    if isinstance(upstox, str):
+        try: upstox = json.loads(upstox)
+        except Exception: upstox = {}
+    if upstox:
+        for src_key, uni_key in [("isin","isin"),("symbol","symbol"),
+                                  ("listing_exchange","listing_exchange"),
+                                  ("industry","sector")]:
+            val = upstox.get(src_key)
+            if val and (uni_key not in unified or not unified.get(uni_key)):
+                unified[uni_key] = str(val)
+    
+    gmp = ipo.gmp_latest
+    if isinstance(gmp, str):
+        try: gmp = json.loads(gmp)
+        except Exception: gmp = {}
+    if gmp:
+        unified["gmp"] = {
+            "gmp": gmp.get("gmp"),
+            "gmp_percent": gmp.get("gmp_percent"),
+            "price_band_top": gmp.get("price_band_top"),
+            "lot_size": gmp.get("lot_size"),
+            "subject_to_sauda": gmp.get("subject_to_sauda"),
+            "est_listing_price": gmp.get("est_listing_price"),
+            "updated_on": gmp.get("updated_on"),
+            "ipo_size_cr": gmp.get("ipo_size_cr"),
+        }
+        if "lot_size" not in unified or not unified.get("lot_size"):
+            if gmp.get("lot_size"):
+                unified["lot_size"] = str(gmp["lot_size"])
+    
+    sub = ipo.subscription_latest
+    if isinstance(sub, str):
+        try: sub = json.loads(sub)
+        except Exception: sub = {}
+    if sub:
+        unified["subscription"] = {}
+        for cat in ["total","retail","qib","hni_2l_to_10l","hni_above_10l"]:
+            d = sub.get(cat)
+            if isinstance(d, dict) and d.get("bid") and d.get("offered"):
+                unified["subscription"][cat] = {
+                    "bid": d["bid"],
+                    "offered": d["offered"],
+                    "times": d.get("times"),
+                }
+    
+    total_shares = unified.get("total_issue_shares")
+    if total_shares:
+        for pct_field, shares_field in [
+            ("qib_percent","qib_shares"),("nii_percent","nii_shares"),("retail_percent","retail_shares"),
+        ]:
+            if shares_field not in unified or not unified.get(shares_field):
+                pct = unified.get(pct_field)
+                if pct:
+                    computed = _compute_issue_shares(total_shares, pct)
+                    if computed:
+                        unified[shares_field] = computed
+        
+        nii_shares = unified.get("nii_shares")
+        if nii_shares and ("bhnii_shares" not in unified or not unified.get("bhnii_shares")):
+            try:
+                nii_num = float(nii_shares.replace(",",""))
+                unified["bhnii_shares"] = f"{int(nii_num*2/3):,}"
+                unified["shnii_shares"] = f"{int(nii_num*1/3):,}"
+            except: pass
+        
+        qib_shares = unified.get("qib_shares")
+        if qib_shares and ("anchor_shares" not in unified or not unified.get("anchor_shares")):
+            try:
+                qib_num = float(qib_shares.replace(",",""))
+                anchor = int(qib_num * 60 / 100)
+                unified["anchor_shares"] = f"{anchor:,}"
+                unified["qib_ex_anchor_shares"] = f"{int(qib_num - anchor):,}"
+            except: pass
+    
+    for fin_field in ["total_revenue","total_income","profit_after_tax",
+                      "ebitda","total_assets","net_worth",
+                      "reserves_and_surplus","total_borrowings"]:
+        val = unified.get(fin_field)
+        if val and isinstance(val, str) and "|" in val:
+            parsed = _parse_pipe_values(val)
+            if parsed:
+                unified[fin_field] = parsed
+    
+    return unified
+
+
+def _compute_issue_shares(total_shares_str, percent_str):
+    """Compute share count from total x percentage."""
+    if not total_shares_str or not percent_str:
+        return None
+    try:
+        total = float(total_shares_str.replace(",",""))
+        pct = float(percent_str.replace("%","").replace(",",""))
+        return f"{int(total * pct / 100):,}"
+    except: return None
+
+
+def _parse_pipe_values(value):
+    """Parse pipe-separated string into {period: amount} dict."""
+    if not value or not isinstance(value, str):
+        return {}
+    result = {}
+    for part in value.split("|"):
+        part = part.strip()
+        if ":" in part:
+            period, amt = part.split(":", 1)
+            period = period.strip()
+            amt = amt.strip().replace(",","")
+            if period and amt:
+                result[period] = amt
+    return result
+
 
 
 def _restructure_sectioned(unified: dict) -> dict:
@@ -277,6 +443,12 @@ def _restructure_sectioned(unified: dict) -> dict:
 
     if "application_lot_table" in unified:
         sectioned["application_lot_table"] = unified["application_lot_table"]
+    
+    if "gmp" in unified:
+        sectioned["gmp"] = unified["gmp"]
+    
+    if "subscription" in unified:
+        sectioned["subscription"] = unified["subscription"]
 
     # Keep any unrecognized fields in a catch-all
     all_picked = set()
@@ -362,6 +534,17 @@ def build_unified(ipo_id: int) -> dict[str, Any]:
                         "section_name": sec.section_name,
                         "schema_version": section_schema_version,
                     }
+
+        # ENRICH from external sources (BSE, Upstox, GMP, subscription)
+        unified = _enrich_from_sources(unified, ipo)
+        for field in unified:
+            if field not in provenance:
+                provenance[field] = {
+                    "doc_type": "enriched",
+                    "parsed_at": datetime.now(timezone.utc).isoformat(),
+                    "section_name": "__enriched__",
+                    "schema_version": SCHEMA_VERSION,
+                }
 
         # Run validation
         result = validate(unified, ctx=ctx)
