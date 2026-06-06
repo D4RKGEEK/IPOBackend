@@ -799,6 +799,139 @@ async def parse_ipo_sections_firecrawl(ipo_id: int = Path(...), force: bool = Qu
             "message": f"Firecrawl parse started. Poll GET /api/tasks/{task_id}"}
 
 
+# ─── Enrich from Raw MD (background) ────────────────────────
+@app.post("/api/ipos/{ipo_id}/enrich", tags=["Sections"],
+    summary="Enrich unified_data with KPI/ratio data from raw_md (regex parser)",
+    description="Extracts EPS, RoNW, Net Worth, etc. from OBJECTS_OF_THE_OFFER and "
+                "RESTATED_FINANCIAL_STATEMENTS raw_md using regex. Fills gaps that "
+                "Firecrawl LLM misses. Only updates fields that are empty in unified_data.")
+async def enrich_ipo_from_raw(ipo_id: int = Path(...)):
+    ipo = db_service.get_ipo_by_id(ipo_id)
+    if not ipo:
+        raise HTTPException(404, "IPO not found")
+
+    task_id = get_manager().create("enrich", f"Enrich {ipo.company_name} from raw_md")
+
+    def _run(tid, mgr):
+        try:
+            from app.db.engine import get_session
+            from app.db.models import DocumentSection, IPOMaster
+            from app.raw_md_parser import enrich_multisection
+
+            # 1. Fetch raw_md for target sections
+            section_texts = {}
+            for sec_name in ("OBJECTS_OF_THE_OFFER", "RESTATED_FINANCIAL_STATEMENTS"):
+                for dt in ("fp", "rhp", "drhp"):
+                    with get_session() as s:
+                        sec = s.query(DocumentSection).filter(
+                            DocumentSection.ipo_master_id == ipo_id,
+                            DocumentSection.section_name == sec_name,
+                            DocumentSection.doc_type == dt,
+                        ).first()
+                        if sec and sec.raw_md:
+                            section_texts[sec_name] = sec.raw_md
+                            mgr.update(tid, 0.2, f"Found {sec_name} ({dt}, {len(sec.raw_md):,} chars)")
+                            break
+
+            if not section_texts:
+                mgr.fail(tid, "No relevant sections found for enrichment")
+                return
+
+            # 2. Run raw_md parsers
+            mgr.update(tid, 0.4, "Running raw_md parsers...")
+            extra = enrich_multisection(section_texts)
+            if not extra:
+                mgr.fail(tid, "No data extracted from raw_md")
+                return
+
+            mgr.update(tid, 0.6, f"Extracted {len(extra)} fields from raw_md")
+
+            # 3. Merge into existing unified_data (fill gaps only)
+            # unified_data is sectioned: {company:{}, ratios:{}, financials:{}, ...}
+            # Map extracted fields to their target sections
+            FIELD_SECTIONS = {
+                # → ratios section
+                "roe_percent": "ratios",
+                "ronw_weighted_avg": "ratios",
+                "ronw_fy2023": "ratios",
+                "ronw_fy2024": "ratios",
+                "ronw_fy2025": "ratios",
+                "eps_basic": "ratios",
+                "eps_diluted": "ratios",
+                "eps_basic_current": "ratios",
+                "eps_diluted_current": "ratios",
+                "eps_basic_fy2023": "ratios",
+                "eps_diluted_fy2023": "ratios",
+                "eps_basic_fy2024": "ratios",
+                "eps_diluted_fy2024": "ratios",
+                "eps_basic_fy2025": "ratios",
+                "eps_diluted_fy2025": "ratios",
+                "nav_per_share": "ratios",
+                # → financials section (backup for Firecrawl misses)
+                "total_revenue": "financials",
+                "total_income": "financials",
+                "profit_before_tax": "financials",
+                "profit_after_tax": "financials",
+                "total_assets": "financials",
+                "net_worth": "financials",
+                "reserves_and_surplus": "financials",
+                "total_borrowings": "financials",
+                # → promoters section
+                "promoter_holding_pre_ipo_percent": "promoters",
+                "promoter_holding_post_ipo_percent": "promoters",
+            }
+
+            with get_session() as s:
+                ipo_row = s.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
+                if not ipo_row:
+                    mgr.fail(tid, "IPO not found in DB")
+                    return
+
+                import copy
+                unified = copy.deepcopy(ipo_row.unified_data) or {}
+                changes = 0
+                added: list[str] = []
+                for k, v in extra.items():
+                    target_sec = FIELD_SECTIONS.get(k, None)
+                    if target_sec:
+                        # Place inside sectioned dict
+                        if target_sec not in unified or not isinstance(unified.get(target_sec), dict):
+                            unified[target_sec] = {}
+                        if k not in unified[target_sec] or not unified[target_sec].get(k):
+                            unified[target_sec][k] = v
+                            changes += 1
+                            added.append(k)
+                    else:
+                        # No section mapping — place at top level
+                        if k not in unified or not unified.get(k):
+                            unified[k] = v
+                            changes += 1
+                            added.append(k)
+
+                if changes == 0:
+                    mgr.update(tid, 1.0, f"No new fields to add — all {len(extra)} extracted fields already present")
+                    return {"status": "no_changes", "extracted_fields": list(extra.keys())}
+
+                ipo_row.unified_data = unified
+                s.commit()
+
+            mgr.update(tid, 1.0, f"Enriched {changes} new fields into unified_data")
+            return {
+                "status": "ok",
+                "changes": changes,
+                "extracted_fields": list(extra.keys()),
+                "added_fields": added,
+            }
+
+        except Exception as e:
+            mgr.fail(tid, str(e))
+            raise
+
+    await run_in_background(task_id, _run)
+    return {"task_id": task_id, "status": "started",
+            "message": f"Enrichment started. Poll GET /api/tasks/{task_id}"}
+
+
 # ─── Refresh (background) ──────────────────────────────────
 @app.post("/api/refresh", tags=["Aggregation"],
     summary="Trigger a full re-scrape in the background")
@@ -1154,6 +1287,99 @@ async def pipeline_auto(
 
                 _log(f"Pipeline complete — resolved {stats['resolved_success']}/{stats['pending_resolve']}, "
                      f"parsed {stats['parsed_success']}/{stats['pending_parse']}")
+
+                # 4.5. Enrich — add KPI/ratio data from raw_md (regex parser)
+                stats["stage"] = "enrich"
+                stats["current_action"] = "Enriching parsed IPOs from raw_md..."
+                _update_stats(0.82)
+                enrich_total = 0
+                enrich_ok = 0
+                enrich_errors = 0
+                for ipo in to_parse:
+                    ipo_id = ipo["id"]
+                    name = ipo.get("company_name", str(ipo_id))
+                    stats["current_ipo"] = name
+                    stats["current_action"] = f"Enriching {name}..."
+                    try:
+                        from app.db.engine import get_session
+                        from app.db.models import IPOMaster, DocumentSection
+                        from app.raw_md_parser import enrich_multisection
+                        import copy
+
+                        # Fetch raw_md for target sections
+                        section_texts = {}
+                        with get_session() as s:
+                            for sec_name in ("OBJECTS_OF_THE_OFFER", "RESTATED_FINANCIAL_STATEMENTS"):
+                                for dt in ("fp", "rhp", "drhp"):
+                                    sec = s.query(DocumentSection).filter(
+                                        DocumentSection.ipo_master_id == ipo_id,
+                                        DocumentSection.section_name == sec_name,
+                                        DocumentSection.doc_type == dt,
+                                    ).first()
+                                    if sec and sec.raw_md:
+                                        section_texts[sec_name] = sec.raw_md
+                                        break
+
+                        if not section_texts:
+                            enrich_total += 1
+                            continue
+
+                        extra = enrich_multisection(section_texts)
+                        if not extra:
+                            enrich_total += 1
+                            continue
+
+                        # Merge into unified_data (fill gaps only)
+                        with get_session() as s:
+                            ipo_row = s.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
+                            if not ipo_row:
+                                enrich_total += 1
+                                continue
+
+                            unified = copy.deepcopy(ipo_row.unified_data) or {}
+                            FIELD_SECTIONS = {
+                                "roe_percent": "ratios", "ronw_weighted_avg": "ratios",
+                                "ronw_fy2023": "ratios", "ronw_fy2024": "ratios", "ronw_fy2025": "ratios",
+                                "eps_basic": "ratios", "eps_diluted": "ratios",
+                                "eps_basic_current": "ratios", "eps_diluted_current": "ratios",
+                                "eps_basic_fy2023": "ratios", "eps_diluted_fy2023": "ratios",
+                                "eps_basic_fy2024": "ratios", "eps_diluted_fy2024": "ratios",
+                                "eps_basic_fy2025": "ratios", "eps_diluted_fy2025": "ratios",
+                                "nav_per_share": "ratios",
+                                "total_revenue": "financials", "total_income": "financials",
+                                "profit_before_tax": "financials", "profit_after_tax": "financials",
+                                "total_assets": "financials", "net_worth": "financials",
+                                "reserves_and_surplus": "financials", "total_borrowings": "financials",
+                                "promoter_holding_pre_ipo_percent": "promoters",
+                                "promoter_holding_post_ipo_percent": "promoters",
+                            }
+                            changes = 0
+                            for k, v in extra.items():
+                                target_sec = FIELD_SECTIONS.get(k)
+                                if target_sec:
+                                    if target_sec not in unified or not isinstance(unified.get(target_sec), dict):
+                                        unified[target_sec] = {}
+                                    if k not in unified[target_sec] or not unified[target_sec].get(k):
+                                        unified[target_sec][k] = v
+                                        changes += 1
+                                else:
+                                    if k not in unified or not unified.get(k):
+                                        unified[k] = v
+                                        changes += 1
+
+                            if changes > 0:
+                                ipo_row.unified_data = unified
+                                s.commit()
+                                enrich_ok += 1
+                            enrich_total += 1
+
+                    except Exception as e:
+                        logger.warning("Enrich failed for %s (ID %s): %s", name, ipo_id, e)
+                        enrich_errors += 1
+                        enrich_total += 1
+
+                stats["enrich"] = {"total": enrich_total, "enriched": enrich_ok, "errors": enrich_errors}
+                _log(f"Enrich — {enrich_ok}/{enrich_total} enriched, {enrich_errors} errors")
 
                 # 5. Subscription Data — refresh for all open/closed IPOs
                 stats["stage"] = "subscription"
