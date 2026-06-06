@@ -1278,6 +1278,29 @@ async def get_historical(ipo_id: int = Path(...)):
     }
 
 
+# ─── GMP Data ──────────────────────────────────────────────
+@app.post("/api/gmp/refresh", tags=["Aggregation"],
+    summary="Refresh GMP data from Chittorgarh/Investorgain",
+    description="Fetches current GMP snapshot for all IPOs + daily history for active ones. Stores in ipo_master.gmp_latest.")
+async def refresh_gmp(_auth: None = Depends(_require_internal_key)):
+    from app.gmp_data.service import fetch_and_store_all
+    result = await fetch_and_store_all()
+    return {"status": "ok", **result}
+
+
+@app.get("/api/ipos/{ipo_id}/gmp", tags=["Aggregation"],
+    summary="Get stored GMP data for an IPO",
+    description="Returns current GMP snapshot + daily history.")
+async def get_gmp(ipo_id: int = Path(...)):
+    from app.db.engine import get_session
+    from app.db.models import IPOMaster
+    with get_session() as s:
+        ipo = s.query(IPOMaster).filter(IPOMaster.id == ipo_id).first()
+    if not ipo or not ipo.gmp_latest:
+        raise HTTPException(404, "No GMP data found. Run POST /api/gmp/refresh first.")
+    return {"ipo_id": ipo_id, "company_name": ipo.company_name, "data": ipo.gmp_latest}
+
+
 # ─── Status Changes ────────────────────────────────────────
 @app.get("/api/status-changes", response_model=list[StatusChangeItem], tags=["Aggregation"])
 async def get_status_changes(limit: int = Query(50, ge=1, le=200)):

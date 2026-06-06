@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "IPO Aggregation API v3",
-    "description": "IPO Aggregation Platform — list IPOs, resolve PDFs into sections, parse via Firecrawl, get unified data. \n\nBase URLs:\n  Local:    http://127.0.0.1:8001\n  Railway:  https://ipobackend-production.up.railway.app\n\nAuth: Write endpoints (resolve, parse-firecrawl, refresh, clear-db) require X-Internal-Key header.\nDocs: https://ipobackend-production.up.railway.app/docs",
+    "description": "IPO Aggregation Platform — list IPOs, resolve PDFs into sections, parse via Firecrawl, get unified data. \n\nBase URLs:\n  Local:    http://127.0.0.1:8001\n  Railway:  https://ipobackend-production.up.railway.app\n\nAuth: Write endpoints (resolve, parse-firecrawl, refresh, pipeline, subscription, historical, gmp) require X-Internal-Key header.\nDocs: https://ipobackend-production.up.railway.app/docs",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -45,7 +45,7 @@
       "item": [
         {
           "name": "Get Unified Data",
-          "description": "THE endpoint. Returns all extracted fields as flat JSON. 50+ fields: dates, shares, financials, ratios, contacts, fund usage, computed application_lot_table. Values in crores.\n\nFields include: bid_open/close/allotment/listing/refund/credit dates, QIB/NII/Retail/MM/Employee shares, authorized/paid-up/pre/post shares, EPS/NAV/RoNW/ROCE/DebtEq ratios, registrar/BRLM contacts, fund usage breakdown, application lot table.",
+          "description": "THE endpoint. Returns all extracted fields as flat JSON. 50+ fields: dates, shares, financials, ratios, contacts, fund usage, computed application_lot_table. Values in crores.",
           "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/unified", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "unified"] } }
         },
         {
@@ -60,12 +60,12 @@
       "item": [
         {
           "name": "Resolve Documents (Background)",
-          "description": "Downloads RHP/DRHP PDF, detects sections by header matching (25+ variants), extracts each section's text using pymupdf, saves raw_md to DB + R2.\n\nReturns task_id. Poll GET /api/tasks/{task_id} for progress. Requires X-Internal-Key.",
+          "description": "Downloads RHP/DRHP PDF, detects sections by header matching, extracts text, saves raw_md to DB + R2. Returns task_id. Poll GET /api/tasks/{task_id}. Requires X-Internal-Key.",
           "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/ipos/4954/resolve?stream=true", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "resolve"], "query": [{"key": "stream", "value": "true"}] } }
         },
         {
           "name": "Resolve All Pending",
-          "description": "Batch resolves all IPOs that have documents not yet resolved. Requires X-Internal-Key.",
+          "description": "Batch resolves all IPOs with unresolved documents. Requires X-Internal-Key.",
           "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/ipos/resolve-all-pending", "host": ["{{base_url}}"], "path": ["api", "ipos", "resolve-all-pending"] } }
         },
         {
@@ -74,12 +74,12 @@
         },
         {
           "name": "View Section Raw Text",
-          "description": "Returns raw markdown text for a specific section (includes pdfplumber-extracted tables as pipe syntax).",
+          "description": "Returns raw markdown text for a section (includes pdfplumber-extracted tables as pipe syntax).",
           "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/documents/rhp/sections/CAPITAL_STRUCTURE", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "documents", "rhp", "sections", "CAPITAL_STRUCTURE"] } }
         },
         {
           "name": "View Section Parsed Data",
-          "description": "Returns parsed (firecrawl) data for a specific section.",
+          "description": "Returns parsed data for a specific section.",
           "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/documents/rhp/sections/CAPITAL_STRUCTURE/parsed", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "documents", "rhp", "sections", "CAPITAL_STRUCTURE", "parsed"] } }
         },
         {
@@ -93,7 +93,7 @@
       "item": [
         {
           "name": "Parse with Firecrawl",
-          "description": "Sends section raw_md to Firecrawl LLM with JSON schema. Returns structured field data per section. Builds unified_data automatically. Requires X-Internal-Key.",
+          "description": "Sends section raw_md to Firecrawl LLM with JSON schema. Returns structured field data. Builds unified_data automatically. Requires X-Internal-Key.",
           "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/ipos/4954/parse-firecrawl", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "parse-firecrawl"] } }
         },
         {
@@ -113,7 +113,7 @@
       "item": [
         {
           "name": "Get All Tables",
-          "description": "Returns all tables extracted during resolve, in structured JSON format (headers + rows per table). Tables are cleaned: empty columns removed, shifted column pairs merged.",
+          "description": "Returns all tables extracted during resolve, in structured JSON format (headers + rows). Tables cleaned: empty columns removed, shifted pairs merged.",
           "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/tables", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "tables"] } }
         },
         {
@@ -129,6 +129,56 @@
         {
           "name": "Tables by Section + Doc Type",
           "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/tables?doc_type=rhp&section_name=CAPITAL_STRUCTURE", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "tables"], "query": [{ "key": "doc_type", "value": "rhp" }, { "key": "section_name", "value": "CAPITAL_STRUCTURE" }] } }
+        }
+      ]
+    },
+    {
+      "name": "Subscription Data",
+      "item": [
+        {
+          "name": "Fetch Subscription (Single IPO)",
+          "description": "Fetch category-wise subscription for one IPO from NSE (primary) or BSE (fallback). STored in ipo_master.subscription_latest. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/ipos/4954/subscription", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "subscription"] } }
+        },
+        {
+          "name": "Refresh All Subscriptions",
+          "description": "Fetch subscription for ALL open/closed IPOs in one batch. Daily cron target. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/subscription/refresh", "host": ["{{base_url}}"], "path": ["api", "subscription", "refresh"] } }
+        }
+      ]
+    },
+    {
+      "name": "Historical Price Data",
+      "item": [
+        {
+          "name": "Fetch Historical (Single IPO)",
+          "description": "Fetch daily O/H/L/C/volume for one IPO via Upstox/ISIN. Upserts in ipo_historical_prices. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/ipos/4954/historical", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "historical"] } }
+        },
+        {
+          "name": "Refresh All Historical",
+          "description": "Fetch candle data for all open/closed/listed IPOs. Daily cron target. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/historical/refresh", "host": ["{{base_url}}"], "path": ["api", "historical", "refresh"] } }
+        },
+        {
+          "name": "Get Stored Historical Data",
+          "description": "Returns latest candle summary + full candle array for charting.",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/4954/historical", "host": ["{{base_url}}"], "path": ["api", "ipos", "4954", "historical"] } }
+        }
+      ]
+    },
+    {
+      "name": "GMP (Grey Market Premium)",
+      "item": [
+        {
+          "name": "Refresh All GMP Data",
+          "description": "Fetch current GMP snapshot from Investorgain for all 30 IPOs + daily history for active ones. Stores in ipo_master.gmp_latest. 60s execution. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/gmp/refresh", "host": ["{{base_url}}"], "path": ["api", "gmp", "refresh"] } }
+        },
+        {
+          "name": "Get GMP Data for an IPO",
+          "description": "Returns current GMP snapshot + 12-day daily history for a specific IPO.",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/ipos/1927/gmp", "host": ["{{base_url}}"], "path": ["api", "ipos", "1927", "gmp"] } }
         }
       ]
     },
@@ -153,6 +203,11 @@
           "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] } }
         },
         {
+          "name": "Health (Deep Probe)",
+          "description": "Probes R2, Firecrawl, DeepSeek reachability too.",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/health?deep=true", "host": ["{{base_url}}"], "path": ["health"], "query": [{ "key": "deep", "value": "true" }] } }
+        },
+        {
           "name": "Review Queue",
           "description": "List IPOs pending review.",
           "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/review-queue", "host": ["{{base_url}}"], "path": ["api", "review-queue"] } }
@@ -171,6 +226,11 @@
           "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/status-changes?limit=20", "host": ["{{base_url}}"], "path": ["api", "status-changes"], "query": [{ "key": "limit", "value": "20" }] } }
         },
         {
+          "name": "System Usage",
+          "description": "System resource usage (disk, memory, uptime).",
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/system/usage", "host": ["{{base_url}}"], "path": ["api", "system", "usage"] } }
+        },
+        {
           "name": "Trigger Scrape (Background)",
           "description": "Full re-scrape from Upstox. Use sources=all for Upstox + legacy SEBI/BSE/NSE. Returns task_id. Requires X-Internal-Key.",
           "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/refresh", "host": ["{{base_url}}"], "path": ["api", "refresh"] } }
@@ -181,14 +241,19 @@
           "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/refresh?year=2026", "host": ["{{base_url}}"], "path": ["api", "refresh"], "query": [{ "key": "year", "value": "2026" }] } }
         },
         {
-          "name": "Master Pipeline (Auto)",
-          "description": "Runs the full Scrape -> Resolve -> Parse pipeline automatically in the background. Memory optimized and handles stream=true.",
-          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/pipeline/auto?year=2026&stream=true", "host": ["{{base_url}}"], "path": ["api", "pipeline", "auto"], "query": [{ "key": "year", "value": "2026" }, { "key": "stream", "value": "true" }] } }
-        },
-        {
           "name": "Scrape All Sources",
           "description": "Scrape from Upstox + legacy SEBI/BSE/NSE. Requires X-Internal-Key.",
           "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/refresh?sources=all", "host": ["{{base_url}}"], "path": ["api", "refresh"], "query": [{ "key": "sources", "value": "all" }] } }
+        },
+        {
+          "name": "Master Pipeline (Auto)",
+          "description": "Runs Scrape → Resolve → Parse automatically. Memory-optimized. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/pipeline/auto?year=2026&stream=true", "host": ["{{base_url}}"], "path": ["api", "pipeline", "auto"], "query": [{ "key": "year", "value": "2026" }, { "key": "stream", "value": "true" }] } }
+        },
+        {
+          "name": "Internal Notify Test",
+          "description": "Test notification system. Requires X-Internal-Key.",
+          "request": { "method": "POST", "header": [{ "key": "X-Internal-Key", "value": "{{internal_key}}", "type": "text" }], "url": { "raw": "{{base_url}}/api/internal/notify/test", "host": ["{{base_url}}"], "path": ["api", "internal", "notify", "test"] } }
         },
         {
           "name": "Clear Database",
@@ -199,7 +264,7 @@
     }
   ],
   "variable": [
-    { "key": "base_url", "value": "https://ipobackend-production.up.railway.app", "type": "string" },
-    { "key": "internal_key", "value": "bc13ad...0d34", "type": "string" }
+    { "key": "base_url", "value": "http://127.0.0.1:8001", "type": "string" },
+    { "key": "internal_key", "value": "bc13ad619a09d7679ce0be4260298335141e188a9c146653d84d6ef3229d0d34", "type": "string" }
   ]
 }
