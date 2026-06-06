@@ -73,22 +73,46 @@ def _get_ipo_by_gmp_id(ipo_gmp_id: int) -> Optional[IPOMaster]:
 
 
 def _get_or_create_ipo_by_gmp_id(ipo_gmp_id: int, row_data: dict) -> Optional[IPOMaster]:
-    """Find IPO by source_ids, or create a minimal placeholder."""
+    """Find IPO by source_ids, or by company name match, or create a minimal placeholder."""
     ipo = _get_ipo_by_gmp_id(ipo_gmp_id)
     if ipo:
         return ipo
 
-    # Not found in existing DB — create a minimal entry
-    # This handles IPOs that Chittorgarh tracks but we haven't scraped yet
-    logger.info("gmp: creating placeholder for gmp_id=%s (%s)", ipo_gmp_id, row_data.get("company_name", "?"))
+    # Try matching by company name first (avoids placeholder creation for existing IPOs)
+    company = row_data.get("company_name", "")
+    if company:
+        import re as _re
+        clean = _re.sub(r"[^a-z0-9\s]", "", company.lower()).strip()
+        clean = _re.sub(r"\s+", " ", clean)
+        from sqlalchemy import text as _text
+        import json as _json
+        with get_session() as s:
+            matched = s.execute(
+                _text("SELECT id, normalized_name FROM ipo_master "
+                       "WHERE status != 'discovered' AND normalized_name ILIKE :pat LIMIT 1"),
+                {"pat": f"%{clean}%"}
+            ).fetchone()
+            if matched:
+                s.execute(
+                    _text("UPDATE ipo_master SET source_ids = "
+                           "CASE WHEN source_ids IS NULL THEN :new_ids "
+                           "ELSE source_ids || :new_ids END "
+                           "WHERE id = :mid"),
+                    {"new_ids": _json.dumps({"chittorgarh_gmp_id": ipo_gmp_id}),
+                     "mid": matched[0]}
+                )
+                s.commit()
+                return s.query(IPOMaster).filter(IPOMaster.id == matched[0]).first()
+
+    # Not found — create a minimal placeholder
+    logger.info("gmp: creating placeholder for gmp_id=%s (%s)", ipo_gmp_id, company)
     with get_session() as s:
-        company_name = row_data.get("company_name", f"Chitto-{ipo_gmp_id}")
-        import re
-        normalized = re.sub(r"[^a-z0-9\s]", "", company_name.lower()).strip()
-        normalized = re.sub(r"\s+", "-", normalized)
+        import re as _re
+        normalized = _re.sub(r"[^a-z0-9\s]", "", company.lower()).strip()
+        normalized = _re.sub(r"\s+", "-", normalized)
 
         ipo = IPOMaster(
-            company_name=company_name,
+            company_name=company,
             normalized_name=normalized,
             status="discovered",
             source_ids={"chittorgarh_gmp_id": ipo_gmp_id},
