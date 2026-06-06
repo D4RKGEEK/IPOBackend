@@ -196,6 +196,7 @@ def get_sections(ipo_id: int, doc_type: str) -> list[dict]:
             "char_count": r.char_count,
             "parsed": bool(r.parsed),
             "parsed_at": r.parsed_at.isoformat() if r.parsed_at else None,
+            "parsed_md_sha256": r.parsed_md_sha256,
         } for r in rows]
 
 
@@ -327,6 +328,22 @@ def mark_section_parsed(section_id: int, parsed_data: dict) -> None:
         s.commit()
 
 
+def update_section_parsed_hash(ipo_id: int, doc_type: str, section_name: str) -> None:
+    """Mark a section as already-parsed by setting parsed_md_sha256 = raw_md_sha256,
+    so the Firecrawl hash-gate can skip re-parsing sections whose content hasn't
+    changed after a delete-then-re-insert resolve cycle."""
+    from .models import DocumentSection
+    with get_session() as s:
+        row = s.query(DocumentSection).filter(
+            DocumentSection.ipo_master_id == ipo_id,
+            DocumentSection.doc_type == doc_type,
+            DocumentSection.section_name == section_name,
+        ).first()
+        if row and row.raw_md_sha256:
+            row.parsed_md_sha256 = row.raw_md_sha256
+            s.commit()
+
+
 def get_section_parsed(ipo_id: int, doc_type: str, section_name: str) -> Optional[dict]:
     """Get parsed data for a section."""
     from .models import DocumentSection
@@ -416,6 +433,9 @@ class DatabaseService:
 
     def mark_section_parsed(self, section_id: int, parsed_data: dict):
         return mark_section_parsed(section_id, parsed_data)
+
+    def update_section_parsed_hash(self, ipo_id: int, doc_type: str, section_name: str):
+        return update_section_parsed_hash(ipo_id, doc_type, section_name)
 
     def get_dashboard_stats(self) -> dict:
         return get_dashboard_stats()

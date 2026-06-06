@@ -1185,6 +1185,22 @@ async def pipeline_auto(
                     stats["historical"] = {"error": str(e)}
                     _log(f"Historical FAILED — {e}")
 
+                # 7. GMP Data — refresh GMP from Chittorgarh/Investorgain
+                stats["stage"] = "gmp"
+                stats["current_action"] = "Fetching GMP data..."
+                _update_stats(0.96)
+                try:
+                    from app.gmp_data.service import fetch_and_store_all as fetch_gmp
+                    gmp_result = await fetch_gmp()
+                    stats["gmp"] = gmp_result
+                    _log(f"GMP — {gmp_result.get('fetched',0)} fetched, "
+                         f"{gmp_result.get('skipped',0)} skipped, {gmp_result.get('failed',0)} failed, "
+                         f"{gmp_result.get('total_visible',0)} total visible")
+                except Exception as e:
+                    logger.warning("pipeline: gmp failed: %s", e)
+                    stats["gmp"] = {"error": str(e)}
+                    _log(f"GMP FAILED — {e}")
+
                 stats["stage"] = "completed"
                 stats["current_action"] = "Pipeline complete"
                 stats["current_ipo"] = None

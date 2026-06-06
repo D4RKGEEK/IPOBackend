@@ -597,6 +597,16 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
         loop = asyncio.get_running_loop()
         page_entries = await loop.run_in_executor(_get_pdf_executor(), _find_sections_in_doc, tmp_path, total_pages)
         sections = _page_range_entries(page_entries, total_pages)
+        # ─── Preserve parsed status before delete so Firecrawl hash-gate
+        #     doesn't re-parse already-parsed sections on next pipeline run. ─────
+        _parsed_sections: set[str] = set()
+        try:
+            for _row in db_service.get_sections(ipo_id, doc_type):
+                if _row.get("parsed") and _row.get("parsed_md_sha256"):
+                    _parsed_sections.add(_row["section_name"])
+        except Exception:
+            pass  # best-effort; fresh resolve is fine
+
         db_service.delete_sections(ipo_id, doc_type)
         saved_sections = []
 
@@ -637,6 +647,21 @@ async def resolve_document(ipo_id: int, doc_type: str, url: str, db_service, cli
                     db_service.upsert_section(ipo_id, doc_type, section_name)
         finally:
             gc.collect()
+
+        # ─── Restore parsed status for sections that were already parsed ─────
+        #     Set parsed_md_sha256 = raw_md_sha256 so Firecrawl hash-gate
+        #     skips them on the next pipeline run (content hasn't changed).
+        if _parsed_sections:
+            try:
+                for _sec in saved_sections:
+                    if _sec["section_name"] in _parsed_sections:
+                        db_service.update_section_parsed_hash(
+                            ipo_id, doc_type, _sec["section_name"]
+                        )
+            except Exception:
+                logger.warning(
+                    "resolve %s/%s: could not restore parsed_md_sha256", ipo_id, doc_type
+                )
 
         # Mark document as resolved so the pipeline audit skips re-downloading next run.
         # drhp_processed / rhp_processed are Integer(0/1) columns — use 1, not True.
