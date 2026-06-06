@@ -229,6 +229,9 @@ def upsert_section(ipo_id: int, doc_type: str, section_name: str,
                    page_start: Optional[int] = None, page_end: Optional[int] = None,
                    raw_md: Optional[str] = None) -> None:
     """Create or update a document section."""
+    # PostgreSQL TEXT fields cannot contain NUL (0x00) bytes — strip them
+    if raw_md is not None:
+        raw_md = raw_md.replace('\x00', '')
     import hashlib
     from .models import DocumentSection
     with get_session() as s:

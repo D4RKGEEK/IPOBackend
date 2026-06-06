@@ -643,6 +643,9 @@ class DatabaseService:
     # ─── Sections (ToC-based) ─────────────────────────────
 
     def upsert_section(self, ipo_id, doc_type, section_name, page_start=None, page_end=None, raw_md=None):
+        # PostgreSQL TEXT fields cannot contain NUL (0x00) bytes — strip them
+        if raw_md is not None:
+            raw_md = raw_md.replace('\x00', '')
         import hashlib
         raw_md_hash = hashlib.sha256(raw_md.encode("utf-8")).hexdigest() if raw_md else None
         with self._session() as session:

@@ -59,6 +59,9 @@ class IPOMaster(Base):
     # Subscription data
     subscription_latest: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
 
+    # GMP (Grey Market Premium) data — from Chittorgarh/Investorgain
+    gmp_latest: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
+
     # Unified data
     unified_data: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)
     unified_provenance: Mapped[Optional[dict]] = mapped_column(SaJSON, nullable=True)

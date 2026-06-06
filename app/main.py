@@ -980,7 +980,7 @@ async def pipeline_auto(
                         if primary_url and not rhp_processed:
                             unproc_doc = True
                             resolve_reason = "rhp/fp not yet resolved (existing URL)"
-                        elif not primary_url and drhp_url and not drhp_processed:
+                        elif not rhp_processed and not primary_url and drhp_url and not drhp_processed:
                             unproc_doc = True
                             resolve_reason = "drhp not yet resolved (existing URL)"
 
